@@ -21,6 +21,7 @@ Bekerja bersama: `nawasara/vault` (kredensial), `nawasara/registry` (OPD),
 | Grup Vault `workspace` + tombol Uji | ✅ |
 | Peserta Pilot: daftar, tambah dari direktori Keycloak, cabut/hapus, kill switch (T-05) | ✅ |
 | API akses `GET /api/v1/workspace/access/{nip}`, scope `workspace.access.read` (T-06) | ✅ |
+| Direktori `GET /api/v1/workspace/directory`, scope `workspace.directory.read`: cari pegawai (nama/NIP) dan OPD untuk Bagikan dan @mention (T-25) | ✅ |
 | Sinkron grup Keycloak `workspace-pilot`: setelah perubahan + tiap 15 menit (T-07) | ✅ |
 | Klien admin Nextcloud: akun, grup, kuota, Team Folders + ACL (T-09) | ✅ |
 | Akun Nextcloud untuk seluruh ASN dari cache Keycloak, UID = NIP, bertahap per putaran (T-10) | ✅ |
@@ -145,12 +146,55 @@ MIT
 switch mengalahkan semuanya; akun Kisara nonaktif selalu ditolak; `pilot_open`
 (tahap 3) membuka untuk semua ASN; selain itu hanya peserta aktif.
 
+`GET /api/v1/workspace/directory?q=&limit=&actor=` (scope
+`workspace.directory.read`). `q` minimal 3 karakter: angka saja = awalan NIP,
+selain itu nama (setiap kata harus cocok dengan nama depan/belakang). `limit`
+bawaan 10, maks 20. `actor` = NIP pegawai yang mengetik (opsional, untuk batas
+laju per pegawai).
+
+```json
+{ "data": {
+    "people": [ { "nip": "199506142020121004", "name": "Pringgo Saputro",
+                  "jabatan": "PRANATA KOMPUTER AHLI PERTAMA", "unit": "BIDANG APLIKASI INFORMATIKA",
+                  "opd": { "id": 7, "name": "Dinas Komunikasi dan Informatika" } } ],
+    "opds": [ { "id": 7, "name": "Dinas Komunikasi dan Informatika", "group": "OPD-7" } ] },
+  "meta": { "q": "pringgo", "limit": 10 } }
+```
+
+Galat: `422 query_too_short`, `422 invalid_actor`, `429 rate_limited`
+(dengan `Retry-After`), `401`/`403` dari middleware token/scope.
+
+Keputusan direktori:
+
+- **Sumber cache Keycloak, bukan Nextcloud**, supaya ASN yang belum pernah
+  membuka Workspace ikut ketemu (FR-10 AC-1). Aturan "ASN" sama dengan sinkron
+  akun (aktif + username NIP 18 digit), jadi yang ditemukan pasti punya akun
+  Nextcloud UID = NIP untuk dibagikan.
+- **Yang dicari hanya NIP dan nama depan/belakang.** Bukan email, bukan JSON
+  `attributes`: pencarian di sana menjadi oracle ("adakah yang nomor WA-nya
+  0812...") walau nilainya tidak pernah dikembalikan.
+- **Jawaban daftar-izin** (`DirectoryPersonResource`, `DirectoryOpdResource`):
+  nip, nama, jabatan, unit, OPD. NIP ikut karena itu UID Nextcloud untuk
+  berbagi dan @mention.
+- **Jabatan/unit/OPD dari atribut `simas_*`** yang diisi authenticator saat
+  login. ASN yang belum pernah masuk aplikasi Kisara mana pun tetap ditemukan,
+  dengan ketiganya `null`.
+- **OPD hanya yang sudah punya akun Workspace**: grup `OPD-<id>` dibuat oleh
+  sinkron akun; OPD tanpa akun belum punya grup untuk dibagikan.
+- **Batas laju dua lapis** (`directory.*` di config): per token 600/menit,
+  per `actor` 60/menit.
+- **Indeks**: cari NIP memakai indeks `username` (awalan). Cari nama memindai
+  `first_name`/`last_name` (~11 000 baris, tanpa indeks; diukur p95 ~7 ms di
+  SQLite uji). Indeks biasa tidak menolong `LIKE '%kata%'`; bila lambat di
+  produksi, tambahkan FULLTEXT atau kolom nama ternormalisasi di paket
+  `nawasara/keycloak`, bukan di sini.
+
 ## Uji
 
 Lewat remote-test (VM tes), dari root nawasara-dev:
 
 ```bash
 bash <skills>/tooling/remote-test.sh -- 'composer install -n && php artisan package:discover \
-  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota; do \
+  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori; do \
      php packages/nawasara-workspace/tests/manual/$t.php; done'
 ```

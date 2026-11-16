@@ -52,6 +52,12 @@ class WorkspaceServiceProvider extends ServiceProvider
             'Apakah seorang ASN (per NIP) boleh masuk Kisara Workspace saat ini, tahap pilotnya, '
             .'dan apakah ia admin Kisara. Untuk Workspace Web. Read-only, tanpa data pribadi.',
         );
+
+        $this->app->make(\Nawasara\Api\Support\ScopeRegistry::class)->register(
+            'workspace.directory.read',
+            'Cari pegawai (nama atau NIP) dan OPD untuk Bagikan dan @mention di Workspace Web: '
+            .'NIP, nama, jabatan, unit, OPD. Read-only, tanpa email atau nomor HP.',
+        );
     }
 
     /** Mount routes/api.php at /api/v1/workspace. */

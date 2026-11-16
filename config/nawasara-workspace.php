@@ -40,4 +40,16 @@ return [
     // Push a group sync right after a participant or the kill switch changes,
     // instead of waiting for the 15-minute run (FR-02 AC-3: within a minute).
     'sync_on_change' => env('NAWASARA_WORKSPACE_SYNC_ON_CHANGE', true),
+
+    /*
+    | Directory search for Bagikan / @mention (T-25). Limits are per minute:
+    | per service token (all of Workspace Web) and per employee typing
+    | (`actor`). Results per call are capped at max_limit.
+    */
+    'directory' => [
+        'default_limit' => 10,
+        'max_limit' => 20,
+        'per_token_per_minute' => 600,
+        'per_actor_per_minute' => 60,
+    ],
 ];

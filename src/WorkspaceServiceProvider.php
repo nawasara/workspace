@@ -35,6 +35,10 @@ class WorkspaceServiceProvider extends ServiceProvider
         $this->registerPilotSync();
         Services\OffboardingNotifier::registerRule();
 
+        // T-35: alert rules (only with nawasara/alerting), provisioning
+        // failure watch and job lifecycle logs.
+        Alerting\WorkspaceAlerts::boot($this->app);
+
         // Scopes before routes: the token UI hides scopes nobody registered,
         // so forgetting this would make the scope impossible to grant.
         $this->registerApiScopes();
@@ -157,6 +161,9 @@ class WorkspaceServiceProvider extends ServiceProvider
                     ->cron("*/{$everyAudit} * * * *")
                     ->withoutOverlapping(30);
             }
+
+            // T-35: OnlyOffice health every minute, Workspace LXC disk.
+            Alerting\WorkspaceAlerts::schedule($this->app->make(\Illuminate\Console\Scheduling\Schedule::class));
 
             // Kept one year (FR-20 AC-3). Runs even without a source: rows
             // already stored still have to age out.

@@ -120,4 +120,36 @@ return [
         'retention_days' => 365,
         'prune_at' => '03:15',
     ],
+
+    /*
+    | Alerts to the Nawasara Telegram channel (T-35, NFR-07). Needs
+    | nawasara/alerting; without it the checks only log.
+    |  - provisioning: alert after N failed runs in a row of one Workspace job
+    |    (nawasara/sync history); the next success resolves it.
+    |  - onlyoffice: probed every minute; alert when down longer than
+    |    down_minutes. healthcheck_url empty = {Vault base_url minus /nc}/oo/healthcheck
+    |    (internal address, answers "true").
+    |  - disk: Workspace LXC disk from nawasara/proxmox (synced every 15 min).
+    |    Alert above threshold_percent; no change when the sync is older than
+    |    stale_minutes.
+    | Backup failure: pending T-34 (D-01), see README.
+    */
+    'monitoring' => [
+        'provisioning' => [
+            'consecutive_failures' => 2,
+        ],
+        'onlyoffice' => [
+            'enabled' => env('NAWASARA_WORKSPACE_OO_MONITOR', true),
+            'healthcheck_url' => env('NAWASARA_WORKSPACE_OO_HEALTHCHECK_URL', ''),
+            'down_minutes' => 5,
+            'timeout' => 5,
+        ],
+        'disk' => [
+            'enabled' => env('NAWASARA_WORKSPACE_DISK_MONITOR', true),
+            'vmid' => (int) env('NAWASARA_WORKSPACE_VMID', 145),
+            'vm_type' => 'lxc',
+            'threshold_percent' => 80,
+            'stale_minutes' => 120,
+        ],
+    ],
 ];

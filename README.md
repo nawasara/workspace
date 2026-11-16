@@ -36,6 +36,8 @@ Bekerja bersama: `nawasara/vault` (kredensial), `nawasara/registry` (OPD),
 | Jejak Akses: log admin_audit Nextcloud → halaman cari per berkas / per pegawai, saring aksi dan tanggal, simpan 1 tahun (T-36) | ✅ |
 | Jejak Akses tersambung ke log produksi (sumber `file` atau `http`, lihat bagian Jejak Akses) | ⏳ |
 | Layar Kelola Templat di Workspace Web (T-32), gambar mini templat | ⏳ |
+| Peringatan Telegram: provisioning gagal 2x berturut, OnlyOffice tidak menjawab > 5 menit, disk LXC Workspace > 80%; log siklus hidup job dengan request id (T-35) | ✅ |
+| Peringatan cadangan gagal (menunggu T-34 / D-01) | ⏳ |
 
 ## Setup
 
@@ -325,6 +327,100 @@ Workspace Web memicu `Login successful` di setiap permintaan (jika ya, aksi
 "Masuk" akan membanjir dan perlu disaring per sesi), dan apakah penyimpanan
 dari OnlyOffice tercatat sebagai `written to` atas nama pegawai.
 
+## Pemantauan dan peringatan (T-35)
+
+Peringatan Workspace masuk ke kanal Telegram Nawasara lewat paket
+`nawasara/alerting` (NFR-07). Paket itu opsional: tanpa dia aturan tidak
+didaftarkan, pemantau tetap berjalan dan menulis log, dan tidak ada yang
+melempar galat. Kodenya di `src/Alerting/`, setelan di
+`config('nawasara-workspace.monitoring')`.
+
+| Aturan | Severity | Target (stabil) | Menyala | Pulih |
+|---|---|---|---|---|
+| `workspace.provisioning.failed` | warning, ulang tiap 6 jam | `WorkspaceJob` / nama job, mis. `SyncWorkspaceAccountsJob` | 2 putaran terakhir job itu `failed` di riwayat nawasara/sync | putaran berikutnya berhasil |
+| `workspace.onlyoffice.down` | critical, ulang tiap 60 menit | `WorkspaceService` / `onlyoffice` | healthcheck gagal terus lebih dari 5 menit | probe pertama yang sehat |
+| `workspace.disk.high` | warning, ulang tiap 24 jam | `ProxmoxVm` / `lxc/145` | disk LXC Workspace > 80% | turun ke 80% atau kurang |
+
+Job yang dipantau: `SyncWorkspaceAccountsJob`, `SyncWorkspaceFoldersJob`,
+`SyncPilotGroupJob`, `SyncWorkspaceOffboardingJob`, `IngestAuditLogJob`.
+
+Jadwal (lewat `$schedule->call()`): `nawasara-workspace:onlyoffice-health`
+tiap menit, `nawasara-workspace:disk-usage` tiap 15 menit.
+
+### Keputusan yang mudah dibatalkan tanpa tahu alasannya
+
+- **"2x berturut" dihitung dari riwayat sync, bukan penghitung di memori.**
+  Putaran berjalan di proses pekerja yang berbeda, dan putaran yang dibunuh
+  timeout tidak memancarkan event kegagalan tetapi tetap meninggalkan baris
+  `failed`. Riwayat adalah satu-satunya tempat "dua putaran terakhir" benar.
+- **Target = nama job, bukan id putaran.** Id putaran berganti tiap kali, dan
+  alert yang kuncinya berganti tidak pernah bisa dipulihkan (kejadian 5.894
+  state `firing` di produksi, lihat `SyncJobFinalFailedListener`).
+- **OnlyOffice diperiksa lewat alamat internal, bukan docs.ponorogo.go.id.**
+  Gangguan Cloudflare atau tunnel bukan gangguan OnlyOffice. Bawaan URL:
+  `base_url` Vault tanpa `/nc` ditambah `/oo/healthcheck` (jawabannya
+  `true`); timpa dengan `NAWASARA_WORKSPACE_OO_HEALTHCHECK_URL`. `base_url`
+  di-cache 10 menit, karena setiap `Vault::get` tercatat di
+  `vault_access_log` dan sekali per menit menambah 1.440 baris sehari.
+- **Kegagalan pertama hanya mencatat waktu mulai (cache).** Satu restart atau
+  satu menit lambat tidak berbunyi. Alert berbunyi pada probe ketika padam
+  sudah lebih dari 5 menit; karena probe per menit, praktiknya 6 sampai 7
+  menit setelah OnlyOffice benar-benar mati.
+- **Disk dibaca dari nawasara/proxmox, bukan agen baru.** Proxmox
+  melaporkan disk dari dalam mesin untuk LXC, dan LXC 145 adalah LXC. Aturan
+  disk milik proxmox sendiri (`proxmox.vm.disk.*`) diam selama sisa > 20 GB,
+  jadi di disk 200 GB baru berbunyi sekitar 90%, terlambat untuk NFR-07; itu
+  sebabnya ada aturan sendiri. Data sinkron yang lebih tua dari 120 menit,
+  atau baris yang tidak ada, **tidak** mengubah apa pun: tidak diketahui
+  bukan berarti sehat.
+- Proxmox hanya melaporkan **disk root** kontainer. Kalau data Nextcloud
+  kelak dipindah ke mount point terpisah (`mp0`), aturan ini tidak lagi
+  mengukurnya.
+
+### Cadangan gagal: menunggu T-34
+
+Belum ada aturannya, sengaja. Skrip cadangan (T-34) belum ada karena tujuan
+cadangan belum diputuskan (D-01), dan endpoint yang dibuat sekarang tidak
+akan dipanggil siapa pun. Kontrak yang disarankan untuk T-34:
+
+- skrip cadangan **hanya melapor saat berhasil** (heartbeat), mis.
+  `POST /api/v1/workspace/backup/heartbeat` dengan scope baru
+  `workspace.backup.write`, isi: waktu selesai, ukuran, durasi;
+- Nawasara menyalakan `workspace.backup.failed` (target `WorkspaceBackup` /
+  `daily`) bila heartbeat terakhir **lebih tua dari 26 jam** (RPO 24 jam +
+  kelonggaran), dan memulihkannya pada heartbeat berikutnya.
+
+Dead-man switch, bukan laporan kegagalan: cadangan yang gagal karena host
+mati, disk penuh, atau cron tidak jalan tidak pernah sempat melapor gagal.
+
+### Log siklus hidup (NFR-06)
+
+Setiap job Workspace menulis `workspace.job.started`,
+`workspace.job.attempt_failed`, `workspace.job.finished` (jumlah dari hasil
+putaran + `duration_ms`) dan `workspace.job.failed`. Semua baris satu
+percobaan membawa `request_id` yang sama (uuid job antrean) dan
+`sync_job_id`. Hanya angka dari hasil putaran yang ikut; nama, NIP, jalur
+berkas, dan token tidak. Pemantau menulis `workspace.onlyoffice.down` /
+`.alerted` / `.recovered`, `workspace.disk.high` / `.stale` / `.unknown`
+dengan `request_id` per pemeriksaan, hanya saat keadaan berubah atau
+bermasalah, bukan tiap menit.
+
+### Catatan untuk nawasara/alerting
+
+Satu kegagalan job Workspace sudah memicu dua peringatan bawaan paket
+alerting sebelum aturan "2x berturut" ini: `sync.job.failed.workspace`
+(semua sync) dan `queue.job.failed` (penyaringnya mencari teks
+`Nawasara\Sync` di nama kelas, sehingga job turunan `AbstractSyncJob` di
+paket lain lolos). Mematikannya ada di paket alerting, bukan di sini.
+
+### Belum diverifikasi di lingkungan nyata
+
+- `/oo/healthcheck` terjangkau dari Nawasara lewat alamat internal LXC 145.
+- Baris `nawasara_proxmox_vms` untuk vmid 145 terisi (Proxmox yang disinkron
+  harus memuat node tempat LXC 145).
+- Uji dari dokumen tugas: hentikan kontainer onlyoffice 6 menit, isi disk uji
+  > 80%, lalu periksa pesan Telegram.
+
 ## Roadmap
 
 Lihat `docs/plan/kisara-workspace/04-tasks.md` (epic E-01, E-02, E-07..E-10).
@@ -565,6 +661,6 @@ Lewat remote-test (VM tes), dari root nawasara-dev:
 
 ```bash
 bash <skills>/tooling/remote-test.sh -- 'composer install -n && php artisan package:discover \
-  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api uji-templat-bawaan uji-templat-api uji-pegawai-keluar uji-jejak-akses; do \
+  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api uji-templat-bawaan uji-templat-api uji-pegawai-keluar uji-jejak-akses uji-peringatan; do \
      php packages/nawasara-workspace/tests/manual/$t.php; done'
 ```

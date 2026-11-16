@@ -12,7 +12,8 @@ return [
     'request_timeout' => 15,
 
     /*
-    | Defaults (FR-13 AC-1). Overridable per employee / per OPD later (T-14).
+    | Defaults (FR-13 AC-1). Exceptions per employee / per OPD are rows in
+    | Penyimpangan Kuota (T-14), applied by the next account / folder sync.
     */
     'quota' => [
         'drive_default' => '3 GB',

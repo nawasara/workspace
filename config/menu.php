@@ -36,6 +36,13 @@ return [
                 'permission' => 'workspace.view',
                 'navigate' => true,
             ],
+            [
+                'label' => 'Penyimpangan Kuota',
+                'icon' => 'lucide-hard-drive',
+                'url' => url($prefix.'/quota'),
+                'permission' => 'workspace.quota.view',
+                'navigate' => true,
+            ],
         ],
     ],
 ];

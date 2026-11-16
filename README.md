@@ -26,8 +26,9 @@ Bekerja bersama: `nawasara/vault` (kredensial), `nawasara/registry` (OPD),
 | Akun Nextcloud untuk seluruh ASN dari cache Keycloak, UID = NIP, bertahap per putaran (T-10) | ✅ |
 | OPD tiap pegawai dari `simas_skpd` (cocok utuh), override peserta pilot (T-11) | ✅ |
 | Folder OPD: satu Team Folder per OPD, kuota 50 GB, ACL dikelola grup OPD sendiri (T-12) | ✅ |
+| Penyimpangan Kuota: kuota sendiri per pegawai / per Folder OPD, dengan alasan dan pelaku (T-14) | ✅ |
 | Layar atur akses subfolder di Workspace Web (T-13) | ⏳ |
-| Kuota, templat, pegawai keluar, jejak akses | ⏳ |
+| Templat, pegawai keluar, jejak akses | ⏳ |
 
 ## Setup
 
@@ -58,7 +59,8 @@ Lalu isi grup Vault **workspace** dan tekan **Uji**:
 |---|---|
 | `workspace.view` | Ringkasan dan halaman baca |
 | `workspace.pilot.manage` | Peserta pilot, kill switch |
-| `workspace.quota.manage` | Kuota bawaan dan penyimpangan |
+| `workspace.quota.view` | Halaman Penyimpangan Kuota |
+| `workspace.quota.manage` | Menambah, mengubah, menghapus penyimpangan kuota |
 | `workspace.folder.manage` | Folder OPD; membatalkan pembatasan subfolder |
 | `workspace.template.manage` | Kelola Templat |
 | `workspace.offboarding.manage` | Antrean Drive pegawai keluar |
@@ -77,6 +79,26 @@ Lalu isi grup Vault **workspace** dan tekan **Uji**:
   putaran (UnitKerjaMatcher bawaan memuat semua OPD per panggilan).
 - **Hanya grup `OPD-*` yang diatur sinkron akun.** Grup lain (`workspace-pilot`
   dari user_oidc) tidak pernah disentuh.
+
+- **Kuota: bawaan dari config, penyimpangan dari tabel, diterapkan sinkron.**
+  Bawaan `quota.drive_default` (3 GB) dan `quota.opd_folder_default` (50 GB)
+  di `config/nawasara-workspace.php`; pengecualiannya baris di
+  `nawasara_workspace_quota_overrides` (halaman Penyimpangan Kuota). Kuota
+  diset lewat OCS oleh sinkron akun/folder, **bukan** lewat `mapping-quota`
+  user_oidc: dua sumber akan saling menimpa setiap kali pegawai masuk.
+- **Kuota pegawai ikut `state_hash`.** Mengubah atau menghapus penyimpangan
+  mengubah hash satu akun itu, sehingga hanya akun itu yang ditulis ulang.
+  Menyimpan penyimpangan langsung memicu sinkron akun (`sync_on_change`).
+- **Kuota Folder OPD dibandingkan dengan yang dilaporkan Nextcloud**, bukan
+  dengan baris lokal: kuota yang diubah tangan di Nextcloud juga dikembalikan.
+- **Penyimpangan hanya dihapus, tidak dinonaktifkan.** Penyimpangan yang
+  berhenti berlaku sama artinya dengan "bawaan"; baris nonaktif hanya cara
+  kedua mengatakan hal yang sama. Riwayat (nilai, alasan, siapa) tetap di log
+  aktivitas `workspace`. Hapus butuh sudo.
+- **Alasan wajib.** Penyimpangan yang tidak bisa dijelaskan adalah yang
+  pertama "dirapikan" orang lain.
+- **Satuan biner** (1 GB = 1024^3 byte), sama dengan Nextcloud, supaya angka
+  di Nawasara dan di halaman admin Nextcloud sama.
 
 - **Team Folders di `/index.php/apps/groupfolders/folders?format=json`, bukan
   `/ocs/v2.php`.** Pada groupfolders 19.1.20 (Nextcloud 31) jalur OCS v2 menjawab
@@ -129,6 +151,6 @@ Lewat remote-test (VM tes), dari root nawasara-dev:
 
 ```bash
 bash <skills>/tooling/remote-test.sh -- 'composer install -n && php artisan package:discover \
-  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning; do \
+  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota; do \
      php packages/nawasara-workspace/tests/manual/$t.php; done'
 ```

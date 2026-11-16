@@ -19,7 +19,8 @@ class PermissionSeeder extends Seeder
         $permissions = [
             'workspace.view',                // Ringkasan + read-only pages
             'workspace.pilot.manage',        // add/remove pilot participants, kill switch (T-05)
-            'workspace.quota.manage',        // quota defaults and overrides (T-14)
+            'workspace.quota.view',          // Penyimpangan Kuota page (T-14)
+            'workspace.quota.manage',        // add/change/remove quota exceptions (T-14)
             'workspace.folder.manage',       // OPD folders; undo a sub-folder ACL (T-12, T-13)
             'workspace.template.manage',     // Kelola Templat (T-31, T-32)
             'workspace.offboarding.manage',  // departed employees' Drive queue (T-33)

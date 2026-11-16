@@ -4,6 +4,8 @@ namespace Nawasara\Workspace\Services;
 
 use Nawasara\Keycloak\Models\KeycloakUser;
 use Nawasara\Workspace\Models\Account;
+use Nawasara\Workspace\Models\QuotaOverride;
+use Nawasara\Workspace\Support\QuotaSize;
 
 /**
  * A Nextcloud account for every active ASN, before they ever open Workspace
@@ -16,7 +18,10 @@ use Nawasara\Workspace\Models\Account;
  * created here and the one user_oidc links at first login are the same.
  *
  * Idempotent and incremental: an account is written only when it is new or
- * its name, e-mail, quota or OPD changed (state_hash). At most `limit` writes
+ * its name, e-mail, quota or OPD changed (state_hash). The quota is the
+ * employee's exception from Penyimpangan Kuota, else the config default
+ * (T-14); since it is part of the hash, setting, changing or removing an
+ * exception is written on the next run. At most `limit` writes
  * per run; the rest follow in the next run, so the first ~11 000 accounts
  * arrive over a few runs instead of one long one.
  *
@@ -36,14 +41,17 @@ class AccountProvisioner
     public function run(int $limit = 1000): array
     {
         $stats = ['seen' => 0, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'failed' => 0, 'deferred' => 0];
-        $quota = (string) config('nawasara-workspace.quota.drive_default', '3 GB');
+        $quota = QuotaOverride::defaultFor(QuotaOverride::TYPE_EMPLOYEE);
+        // Loaded once per run: a few dozen rows at most, against ~11 000 users.
+        $overrides = QuotaOverride::employees()->pluck('quota_bytes', 'nip')
+            ->map(fn ($bytes) => QuotaSize::format((int) $bytes))->all();
         $known = Account::pluck('state_hash', 'nip')->all();
         $writes = 0;
 
         KeycloakUser::query()
             ->where('enabled', true)
             ->orderBy('id')
-            ->chunk(500, function ($users) use (&$stats, &$writes, &$known, $quota, $limit) {
+            ->chunk(500, function ($users) use (&$stats, &$writes, &$known, $quota, $overrides, $limit) {
                 foreach ($users as $kc) {
                     $nip = (string) $kc->username;
                     if (preg_match('/^\d{18}$/', $nip) !== 1) {
@@ -54,7 +62,7 @@ class AccountProvisioner
                     $want = [
                         'display_name' => mb_substr($kc->full_name ?: $nip, 0, 255),
                         'email' => $kc->email ?: null,
-                        'quota' => $quota,
+                        'quota' => $overrides[$nip] ?? $quota,
                         'opd_id' => $this->opds->forKeycloakUser($kc),
                     ];
                     $hash = hash('sha256', json_encode($want));

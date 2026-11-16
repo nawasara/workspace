@@ -83,6 +83,17 @@ class WorkspaceServiceProvider extends ServiceProvider
         Models\PilotMember::deleted($dispatch);
         Models\Setting::saved($dispatch);
 
+        // A quota exception changed: run the account sync now (it queues the
+        // folder sync), instead of waiting up to sync_interval minutes. Only
+        // the changed account is written, thanks to state_hash.
+        $syncQuota = function () {
+            if (config('nawasara-workspace.sync_on_change', true)) {
+                Jobs\SyncWorkspaceAccountsJob::dispatch(triggerSource: 'event')->afterCommit();
+            }
+        };
+        Models\QuotaOverride::saved($syncQuota);
+        Models\QuotaOverride::deleted($syncQuota);
+
         $this->app->booted(function () {
             if (! $this->app->runningInConsole() || ! config('nawasara-workspace.scheduler.enabled', true)) {
                 return;

@@ -58,6 +58,12 @@ class WorkspaceServiceProvider extends ServiceProvider
             'Cari pegawai (nama atau NIP) dan OPD untuk Bagikan dan @mention di Workspace Web: '
             .'NIP, nama, jabatan, unit, OPD. Read-only, tanpa email atau nomor HP.',
         );
+
+        $this->app->make(\Nawasara\Api\Support\ScopeRegistry::class)->register(
+            'workspace.quota.read',
+            'Pemakaian dan kuota Drive (Nextcloud) dan Mail (cache WHM) seorang ASN per NIP, '
+            .'untuk halaman Penyimpanan Kisara Akun. Read-only.',
+        );
     }
 
     /** Mount routes/api.php at /api/v1/workspace. */

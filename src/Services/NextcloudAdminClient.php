@@ -137,6 +137,44 @@ class NextcloudAdminClient
         $this->ocs('put', '/ocs/v2.php/cloud/users/'.rawurlencode($uid), ['key' => $key, 'value' => $value]);
     }
 
+    /**
+     * Drive usage of one account, as Nextcloud counts it: files the employee
+     * owns (shared ones included, FR-13 AC-3) plus versions and trash
+     * (FR-13 AC-4). `quota` null = unlimited. Null when the account does not
+     * exist.
+     *
+     * An account that never signed in has no storage yet: Nextcloud then
+     * answers only `quota` (bytes, or "none") with `used` 0.
+     *
+     * @return array{used: int, quota: ?int}|null
+     */
+    public function userQuota(string $uid): ?array
+    {
+        $user = $this->getUser($uid);
+        if ($user === null) {
+            return null;
+        }
+
+        $q = $user['quota'] ?? null;
+        if (! is_array($q) || ! array_key_exists('used', $q)) {
+            throw new NextcloudException('Nextcloud tidak mengembalikan pemakaian kuota akun.');
+        }
+
+        $quota = $q['quota'] ?? null;
+        $quota = is_numeric($quota) && (int) $quota >= 0 ? (int) $quota : null; // -3 / "none" = unlimited
+
+        return ['used' => max(0, (int) $q['used']), 'quota' => $quota];
+    }
+
+    /** Same client with another timeout, for calls a person is waiting on. */
+    public function withTimeout(int $seconds): static
+    {
+        $clone = clone $this;
+        $clone->timeout = $seconds;
+
+        return $clone;
+    }
+
     public function disableUser(string $uid): void
     {
         $this->ocs('put', '/ocs/v2.php/cloud/users/'.rawurlencode($uid).'/disable');

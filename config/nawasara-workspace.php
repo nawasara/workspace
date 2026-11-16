@@ -52,4 +52,16 @@ return [
         'per_token_per_minute' => 600,
         'per_actor_per_minute' => 60,
     ],
+
+    /*
+    | Quota API for the Penyimpanan page of Kisara Akun (T-29). Drive answers
+    | are cached per NIP so reloads do not reach Nextcloud each time; a failed
+    | read is cached shorter. warning_percent = "Hampir penuh" (FR-14 AC-2).
+    */
+    'quota_api' => [
+        'cache_seconds' => 60,
+        'failure_cache_seconds' => 15,
+        'timeout' => 5,
+        'warning_percent' => 80,
+    ],
 ];

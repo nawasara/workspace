@@ -28,6 +28,7 @@ Bekerja bersama: `nawasara/vault` (kredensial), `nawasara/registry` (OPD),
 | OPD tiap pegawai dari `simas_skpd` (cocok utuh), override peserta pilot (T-11) | ✅ |
 | Folder OPD: satu Team Folder per OPD, kuota 50 GB, ACL dikelola grup OPD sendiri (T-12) | ✅ |
 | Penyimpangan Kuota: kuota sendiri per pegawai / per Folder OPD, dengan alasan dan pelaku (T-14) | ✅ |
+| Kuota `GET /api/v1/workspace/quota/{nip}`, scope `workspace.quota.read`: Drive (Nextcloud) + Mail (cache WHM) untuk halaman Penyimpanan Kisara Akun (T-29) | ✅ |
 | Layar atur akses subfolder di Workspace Web (T-13) | ⏳ |
 | Templat, pegawai keluar, jejak akses | ⏳ |
 
@@ -189,12 +190,69 @@ Keputusan direktori:
   produksi, tambahkan FULLTEXT atau kolom nama ternormalisasi di paket
   `nawasara/keycloak`, bukan di sini.
 
+`GET /api/v1/workspace/quota/{nip}` (scope `workspace.quota.read`), 200
+walau salah satu sumber gagal:
+
+```json
+{ "data": {
+    "nip": "199506142020121004",
+    "drive": { "status": "ok", "used_bytes": 2684354560, "quota_bytes": 3221225472,
+               "used_percent": 83, "level": "warning" },
+    "mail":  { "address": "pringgo@ponorogo.go.id", "status": "ok",
+               "used_bytes": 210239488, "quota_bytes": 1073741824,
+               "used_percent": 19, "level": "ok" } },
+  "meta": { "warning_percent": 80 } }
+```
+
+- `drive` `null` = bukan peserta pilot (FR-14 AC-4: hanya kartu Mail).
+  `mail` `null` = tidak punya mailbox pribadi.
+- `status`: `ok` atau `unavailable` ("Tidak dapat dimuat", FR-14 AC-3). Saat
+  `unavailable` kuncinya tetap sama, angkanya `null` (`address` Mail tetap
+  diisi bila mailbox-nya diketahui).
+- `quota_bytes` `null` = tak terbatas; `used_percent` lalu `null`, `level`
+  `ok`.
+- `level`: `ok`, `warning` (≥ `warning_percent`, "Hampir penuh", FR-14 AC-2),
+  `full` (pakai ≥ kuota, FR-13 AC-2). `used_percent` dibulatkan ke bawah.
+- Satuan byte, biner (1 MB = 1024^2), sama dengan Nextcloud.
+
+Galat: `422 invalid_nip` (bukan 18 digit), `401`/`403` dari middleware.
+
+Keputusan kuota API:
+
+- **Angka Drive dari Nextcloud** (OCS `cloud/users/{nip}` `quota.used` /
+  `quota.quota`), bukan dari Nawasara: berkas yang dibagikan dihitung ke
+  pemiliknya, versi dan sampah ikut terhitung (FR-13 AC-3/AC-4), dan yang
+  menegakkan kuota adalah Nextcloud.
+- **Peserta = `pilot_open` atau baris aktif di daftar pilot.** Kill switch
+  sengaja tidak menyembunyikan kartu Drive: pintunya tutup sementara, tetapi
+  berkasnya tetap ada dan tetap memakai kuota. Akun Nextcloud ada untuk
+  seluruh ASN (T-10), jadi "punya akun" tidak bisa dipakai sebagai tanda
+  peserta.
+- **Peserta tanpa akun Nextcloud (belum disinkron) = `unavailable`**, bukan
+  "0 dari 3 GB": itu tebakan, bukan jawaban Nextcloud.
+- **Tembolok Drive per NIP 60 detik**, kegagalan 15 detik, batas waktu panggil
+  5 detik (`quota_api.*`). Halaman Penyimpanan dimuat ulang tanpa menyentuh
+  Nextcloud tiap kali, dan Nextcloud yang mati tidak membuat setiap
+  pengunjung menunggu 15 detik.
+- **Mail dari cache `nawasara/whm`, tidak memanggil WHM.** Kesegarannya =
+  jadwal sinkron disk WHM (malam). Mailbox = yang ditautkan cPanel External
+  Authentication ke NIP ini **dan tidak ke NIP lain** (aturan yang sama dengan
+  `MailboxDirectory` Portal ASN). Mailbox bersama OPD bukan kuota pribadi.
+  Bila ada beberapa mailbox pribadi, yang pertama menurut alamat.
+- **Mail yang belum punya angka disk** (baru sinkron ringan `list_pops`,
+  `humanized` kosong) = `unavailable`, bukan "tak terbatas": `quota_mb` null
+  di sana berarti "belum tahu" (lihat `reference_sync_partial_source_overwrite`).
+- **`nawasara/whm` dependensi lunak**: kelas atau tabelnya tidak ada = Mail
+  `unavailable`, bukan galat.
+- **Pesan galat sumber tidak ikut jawaban**, hanya dicatat
+  (`workspace.quota.source_unavailable`, tanpa NIP).
+
 ## Uji
 
 Lewat remote-test (VM tes), dari root nawasara-dev:
 
 ```bash
 bash <skills>/tooling/remote-test.sh -- 'composer install -n && php artisan package:discover \
-  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori; do \
+  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api; do \
      php packages/nawasara-workspace/tests/manual/$t.php; done'
 ```

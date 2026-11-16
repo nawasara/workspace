@@ -22,6 +22,7 @@ Bekerja bersama: `nawasara/vault` (kredensial), `nawasara/registry` (OPD),
 | Peserta Pilot: daftar, tambah dari direktori Keycloak, cabut/hapus, kill switch (T-05) | ✅ |
 | API akses `GET /api/v1/workspace/access/{nip}`, scope `workspace.access.read` (T-06) | ✅ |
 | Sinkron grup Keycloak `workspace-pilot`: setelah perubahan + tiap 15 menit (T-07) | ✅ |
+| Klien admin Nextcloud: akun, grup, kuota, Team Folders + ACL (T-09) | ✅ |
 | Akun Nextcloud untuk seluruh ASN, UID = NIP (T-10) | ⏳ |
 | Folder OPD, akses subfolder oleh anggota OPD (T-12, T-13) | ⏳ |
 | Kuota, templat, pegawai keluar, jejak akses | ⏳ |
@@ -62,6 +63,11 @@ Lalu isi grup Vault **workspace** dan tekan **Uji**:
 | `workspace.audit.view` | Jejak akses |
 
 ## Keputusan yang mudah dibatalkan tanpa tahu alasannya
+
+- **Team Folders di `/index.php/apps/groupfolders/folders?format=json`, bukan
+  `/ocs/v2.php`.** Pada groupfolders 19.1.20 (Nextcloud 31) jalur OCS v2 menjawab
+  404, dan sukses ber-`statuscode` 100. Diverifikasi langsung di LXC 145
+  (17 Nov 2026), bukan dari dokumentasi.
 
 - **Tidak ada peran "admin OPD"** (D-03). Anggota OPD sendiri yang membatasi
   subfolder Folder OPD-nya, dari Workspace Web dengan token mereka sendiri.
@@ -109,6 +115,6 @@ Lewat remote-test (VM tes), dari root nawasara-dev:
 
 ```bash
 bash <skills>/tooling/remote-test.sh -- 'composer install -n && php artisan package:discover \
-  && for t in uji-koneksi-nextcloud uji-akses uji-peserta-pilot uji-grup-pilot; do \
+  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot; do \
      php packages/nawasara-workspace/tests/manual/$t.php; done'
 ```

@@ -38,7 +38,7 @@ $r = $client->testConnection();
 $cek('kunci `success` true', ($r['success'] ?? null) === true);
 $cek('tidak memakai kunci `ok`', ! array_key_exists('ok', $r));
 $cek('pesan menyebut versi', str_contains($r['message'], '31.0.14'), $r['message']);
-Http::assertSent(fn (Request $q) => $q->url() === 'http://10.1.1.37:8080/nc/ocs/v2.php/cloud/capabilities?format=json'
+Http::assertSent(fn (Request $q) => $q->url() === 'http://10.1.1.37:8080/nc/ocs/v2.php/cloud/capabilities'
     && $q->hasHeader('OCS-APIRequest', 'true')
     && str_starts_with($q->header('Authorization')[0] ?? '', 'Basic '));
 $cek('memanggil capabilities dengan Basic auth + OCS-APIRequest', true);

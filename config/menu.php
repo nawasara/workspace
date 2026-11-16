@@ -43,6 +43,13 @@ return [
                 'permission' => 'workspace.quota.view',
                 'navigate' => true,
             ],
+            [
+                'label' => 'Pegawai Keluar',
+                'icon' => 'lucide-user-x',
+                'url' => url($prefix.'/offboarding'),
+                'permission' => 'workspace.offboarding.view',
+                'navigate' => true,
+            ],
         ],
     ],
 ];

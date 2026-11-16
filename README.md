@@ -31,8 +31,9 @@ Bekerja bersama: `nawasara/vault` (kredensial), `nawasara/registry` (OPD),
 | Kuota `GET /api/v1/workspace/quota/{nip}`, scope `workspace.quota.read`: Drive (Nextcloud) + Mail (cache WHM) untuk halaman Penyimpanan Kisara Akun (T-29) | ✅ |
 | 14 templat bawaan Kisara di Team Folder "Templat Kisara", baca saja bagi pegawai (T-21) | ✅ |
 | Tabel templat (UUID) + API: pita `GET /api/v1/workspace/templates`, kelola `.../templates/manage`, unggah, ubah, ganti berkas, hapus (T-31) | ✅ |
+| Pegawai Keluar: akun Kisara nonaktif → akun Workspace nonaktif, Drive Saya ditahan 90 hari, peringatan H-7, lalu dihapus; pindahkan ke Folder OPD, batalkan, hapus sekarang (T-33) | ✅ |
 | Layar atur akses subfolder di Workspace Web (T-13) | ⏳ |
-| Layar Kelola Templat di Workspace Web (T-32), gambar mini templat, pegawai keluar, jejak akses | ⏳ |
+| Layar Kelola Templat di Workspace Web (T-32), gambar mini templat, jejak akses | ⏳ |
 
 ## Setup
 
@@ -77,7 +78,8 @@ atau setelah berkas templat diperbarui.
 | `workspace.quota.manage` | Menambah, mengubah, menghapus penyimpangan kuota |
 | `workspace.folder.manage` | Folder OPD; membatalkan pembatasan subfolder |
 | `workspace.template.manage` | Kelola Templat |
-| `workspace.offboarding.manage` | Antrean Drive pegawai keluar |
+| `workspace.offboarding.view` | Halaman Pegawai Keluar |
+| `workspace.offboarding.manage` | Pindahkan ke Folder OPD, batalkan, hapus sekarang (hapus butuh sudo) |
 | `workspace.audit.view` | Jejak akses |
 
 ## Keputusan yang mudah dibatalkan tanpa tahu alasannya
@@ -131,6 +133,55 @@ atau setelah berkas templat diperbarui.
 - **`base_url` alamat internal**, bukan `https://docs.ponorogo.go.id/nc`.
   Port 8080 di LXC Workspace hanya menerima 10.1.1.30 (LXC Nawasara), dan
   jalur internal tidak melewati Cloudflare.
+
+## Pegawai keluar (T-33)
+
+Halaman **Pegawai Keluar** (`/nawasara-workspace/offboarding`), job
+`SyncWorkspaceOffboardingJob` tiap hari pukul `offboarding.run_at` (02:30 WIB).
+Diurus admin Kisara (D-03).
+
+| Keadaan | Yang terjadi |
+|---|---|
+| Akun Kisara (Keycloak) dinonaktifkan | Akun Nextcloud dinonaktifkan, **tidak dihapus**: berbagi miliknya tetap berlaku. Masuk antrean **Ditahan** 90 hari |
+| Diaktifkan lagi sebelum tenggat | Akun Nextcloud diaktifkan, antrean **Dibatalkan** |
+| 7 hari sebelum tenggat | Peringatan sekali lewat `nawasara/alerting` (aturan `workspace.offboarding.deletion-due`) dan tanda di halaman |
+| Tenggat lewat | Akun dan Drive Saya dihapus. Folder OPD milik OPD, bukan milik akun, jadi tidak tersentuh |
+
+Keputusan yang mudah dibatalkan tanpa tahu alasannya:
+
+- **"Keluar" = `enabled = false` di cache Keycloak, bukan "hilang dari
+  cache".** Sinkron Keycloak yang gagal atau parsial akan membuat ribuan
+  orang tampak hilang; menonaktifkan mereka semua karena itu jauh lebih
+  buruk daripada telat menangani satu orang yang benar-benar dihapus.
+  Ditambah batas `max_new_per_run` (200) keberangkatan baru per putaran.
+- **Sinkron akun melewati setiap NIP yang sedang ditahan**, bahkan setelah
+  Keycloak mengaktifkannya lagi. Mengaktifkan kembali adalah tugas job
+  pegawai keluar; kalau dua alur menyentuh satu akun, yang satu
+  membatalkan yang lain.
+- **Hapus tidak pernah lebih cepat dari 7 hari setelah peringatan**,
+  meski tenggat sudah lewat (jadwal sempat mati, atau tenggat dimajukan).
+  Peringatan yang disusul penghapusan di putaran yang sama tidak memberi
+  admin waktu memindahkan apa pun.
+- **Baris tidak pernah dihapus.** Itu catatan siapa memindahkan berkas ke
+  mana dan siapa menghapus akun. Setelah akun dihapus, baris
+  `nawasara_workspace_accounts`-nya dibuang, sehingga kalau orang itu kembali
+  ia mendapat akun baru yang kosong.
+- **Batal manual tidak mengaktifkan akun.** Akun tetap nonaktif selama akun
+  Kisara-nya nonaktif (ia toh tidak bisa masuk), tetapi tidak dihapus dan
+  tidak diantre ulang. Begitu Keycloak aktif lagi, job mengaktifkannya.
+- **"Pindahkan ke Folder OPD" bertindak sebagai pegawai itu, sebentar.**
+  Admin Nextcloud tidak dapat membaca berkas pengguna lain lewat WebDAV, dan
+  satu-satunya jalan lain (`occ files:transfer-ownership`) butuh shell di
+  server Workspace. Maka: sandi acak 40 karakter (tidak disimpan, tidak
+  dicatat), aktifkan, `MOVE` tiap berkas MILIKNYA di akar (yang dibagikan ke
+  dia dan Team Folder dilewati) ke `<Folder OPD>/Arsip Pegawai Keluar/<NIP
+  Nama>/`, lalu di `finally` nonaktifkan lagi dan ganti sandinya. Pegawai
+  tidak bisa memakai jendela itu karena akun Kisara-nya nonaktif. Nama yang
+  sudah ada di tujuan tidak ditimpa (`Overwrite: F`); dicatat di galat baris.
+- **Belum diverifikasi di Nextcloud sungguhan** (hanya tiruan): pemindahan
+  WebDAV sebagai pegawai, apakah Nextcloud mengirim surel "sandi diubah" ke
+  pegawai, dan perilaku bila pegawai memakai 2FA Nextcloud (login sandi
+  ditolak, galatnya jelas). Uji di LXC 145 sebelum dipakai.
 
 ## Templat bawaan (T-21)
 
@@ -427,6 +478,6 @@ Lewat remote-test (VM tes), dari root nawasara-dev:
 
 ```bash
 bash <skills>/tooling/remote-test.sh -- 'composer install -n && php artisan package:discover \
-  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api uji-templat-bawaan uji-templat-api; do \
+  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api uji-templat-bawaan uji-templat-api uji-pegawai-keluar; do \
      php packages/nawasara-workspace/tests/manual/$t.php; done'
 ```

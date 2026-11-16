@@ -4,6 +4,7 @@ namespace Nawasara\Workspace\Services;
 
 use Nawasara\Keycloak\Models\KeycloakUser;
 use Nawasara\Workspace\Models\Account;
+use Nawasara\Workspace\Models\Offboarding;
 use Nawasara\Workspace\Models\QuotaOverride;
 use Nawasara\Workspace\Support\QuotaSize;
 
@@ -26,7 +27,10 @@ use Nawasara\Workspace\Support\QuotaSize;
  * arrive over a few runs instead of one long one.
  *
  * Disabled Keycloak accounts are left alone here: offboarding (hold 90 days,
- * then delete) is its own flow (T-33).
+ * then delete) is its own flow (T-33). So is every NIP the offboarding queue
+ * currently holds disabled, even once Keycloak enables it again: enabling
+ * it back is the offboarding run's job, and a write from here in between
+ * would have both flows touching one account.
  */
 class AccountProvisioner
 {
@@ -36,28 +40,33 @@ class AccountProvisioner
     ) {}
 
     /**
-     * @return array{seen: int, created: int, updated: int, unchanged: int, failed: int, deferred: int}
+     * @return array{seen: int, created: int, updated: int, unchanged: int, failed: int, deferred: int, held: int}
      */
     public function run(int $limit = 1000): array
     {
-        $stats = ['seen' => 0, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'failed' => 0, 'deferred' => 0];
+        $stats = ['seen' => 0, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'failed' => 0, 'deferred' => 0, 'held' => 0];
         $quota = QuotaOverride::defaultFor(QuotaOverride::TYPE_EMPLOYEE);
         // Loaded once per run: a few dozen rows at most, against ~11 000 users.
         $overrides = QuotaOverride::employees()->pluck('quota_bytes', 'nip')
             ->map(fn ($bytes) => QuotaSize::format((int) $bytes))->all();
         $known = Account::pluck('state_hash', 'nip')->all();
+        $held = Offboarding::where('nc_disabled', true)->pluck('nip')->flip()->all();
         $writes = 0;
 
         KeycloakUser::query()
             ->where('enabled', true)
             ->orderBy('id')
-            ->chunk(500, function ($users) use (&$stats, &$writes, &$known, $quota, $overrides, $limit) {
+            ->chunk(500, function ($users) use (&$stats, &$writes, &$known, $held, $quota, $overrides, $limit) {
                 foreach ($users as $kc) {
                     $nip = (string) $kc->username;
                     if (preg_match('/^\d{18}$/', $nip) !== 1) {
                         continue;
                     }
                     $stats['seen']++;
+                    if (isset($held[$nip])) {
+                        $stats['held']++;
+                        continue;
+                    }
 
                     $want = [
                         'display_name' => mb_substr($kc->full_name ?: $nip, 0, 255),

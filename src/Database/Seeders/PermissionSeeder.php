@@ -23,7 +23,8 @@ class PermissionSeeder extends Seeder
             'workspace.quota.manage',        // add/change/remove quota exceptions (T-14)
             'workspace.folder.manage',       // OPD folders; undo a sub-folder ACL (T-12, T-13)
             'workspace.template.manage',     // Kelola Templat (T-31, T-32)
-            'workspace.offboarding.manage',  // departed employees' Drive queue (T-33)
+            'workspace.offboarding.view',    // Pegawai Keluar page (T-33)
+            'workspace.offboarding.manage',  // move to Folder OPD, cancel, delete now (T-33)
             'workspace.audit.view',          // access trail (T-36)
         ];
 

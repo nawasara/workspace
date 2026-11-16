@@ -33,6 +33,7 @@ class WorkspaceServiceProvider extends ServiceProvider
 
         $this->registerLivewire();
         $this->registerPilotSync();
+        Services\OffboardingNotifier::registerRule();
 
         // Scopes before routes: the token UI hides scopes nobody registered,
         // so forgetting this would make the scope impossible to grant.
@@ -136,6 +137,14 @@ class WorkspaceServiceProvider extends ServiceProvider
                 ->name('nawasara-workspace:sync-accounts')
                 ->cron("*/{$every} * * * *")
                 ->withoutOverlapping(30);
+
+            // Departed employees (T-33). Wall-clock time: app.timezone is UTC.
+            $this->app->make(\Illuminate\Console\Scheduling\Schedule::class)
+                ->call(fn () => Jobs\SyncWorkspaceOffboardingJob::dispatch(triggerSource: 'scheduled'))
+                ->name('nawasara-workspace:sync-offboarding')
+                ->dailyAt((string) config('nawasara-workspace.offboarding.run_at', '02:30'))
+                ->timezone('Asia/Jakarta')
+                ->withoutOverlapping(60);
         });
     }
 

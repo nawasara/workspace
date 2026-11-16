@@ -80,4 +80,21 @@ return [
         'timeout' => 5,
         'warning_percent' => 80,
     ],
+
+    /*
+    | Departed employees (T-33, FR-18). Daily at run_at (Asia/Jakarta).
+    | hold_days: Drive Saya kept after the Keycloak account is disabled.
+    | warn_days: warning before deletion; deletion never comes sooner than
+    | this after the warning. max_new_per_run: new departures disabled per
+    | run, so a Keycloak glitch that disables everyone cannot disable all of
+    | Workspace in one go. archive_dir: folder inside the Folder OPD that
+    | "Pindahkan ke Folder OPD" moves Drive Saya into.
+    */
+    'offboarding' => [
+        'hold_days' => 90,
+        'warn_days' => 7,
+        'max_new_per_run' => 200,
+        'run_at' => '02:30',
+        'archive_dir' => 'Arsip Pegawai Keluar',
+    ],
 ];

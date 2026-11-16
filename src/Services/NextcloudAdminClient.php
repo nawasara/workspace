@@ -368,12 +368,150 @@ class NextcloudAdminClient
         return true;
     }
 
+    // ─── Drive of a departed employee (T-33) ────────────
+
+    /**
+     * Move everything in an employee's own Drive (Drive Saya) into
+     * `$targetDir` inside the team folder mounted at `$teamFolder` in that
+     * employee's tree (FR-18 AC-3). The employee must be a member of the
+     * team folder's group, or it is not mounted for them.
+     *
+     * Why it acts as the employee: the Nextcloud admin cannot read another
+     * user's files over WebDAV (/remote.php/dav/files/{other} is refused even
+     * for admin), and the only server-side alternative is
+     * `occ files:transfer-ownership`, which Nawasara cannot run (no shell on
+     * the Workspace host, by design). So, for the length of this call only:
+     *   1. set a random 40-character password nobody sees (never stored or
+     *      logged), 2. enable the account, 3. PROPFIND the root as the
+     *      employee and MOVE each OWN item (mount-type empty: shared-with-me
+     *      items and team folders are skipped) into the target folder,
+     *   4. in `finally`: disable the account again and replace the password
+     *      with another random one.
+     * The employee cannot use the window: their Keycloak account is
+     * disabled, so OIDC login is refused, and the password exists only in
+     * this process.
+     *
+     * Known side effects, to be checked on a real Nextcloud: Nextcloud may
+     * e-mail the employee "your password was changed"; basic auth with a
+     * password fails if the employee has Nextcloud 2FA enabled. Verified only
+     * against a fake so far.
+     *
+     * Items are moved with Overwrite: F: an item whose name is already taken
+     * in the target is reported in `failed`, never overwritten.
+     *
+     * @return array{moved: int, failed: list<string>}
+     */
+    public function moveUserFilesToTeamFolder(string $uid, string $teamFolder, string $targetDir): array
+    {
+        $password = Str::password(40);
+        $this->updateUser($uid, 'password', $password);
+        $this->enableUser($uid);
+
+        try {
+            // Listed first: a refused login (401) is reported as such.
+            $items = $this->ownRootItems($uid, $password);
+
+            $dir = trim($teamFolder, '/');
+            foreach (array_filter(explode('/', $targetDir), fn ($s) => $s !== '') as $segment) {
+                $dir .= '/'.$segment;
+                $res = $this->davAs($uid, $password, 'MKCOL', $dir);
+                if ($res->status() !== 405) { // 405 = already exists
+                    $this->davOk($res, 'MKCOL', $dir);
+                }
+            }
+
+            $moved = 0;
+            $failed = [];
+            foreach ($items as $name) {
+                $res = $this->davAs($uid, $password, 'MOVE', $name, null, null, [
+                    'Destination' => $this->davUrl($uid, $dir.'/'.$name),
+                    'Overwrite' => 'F',
+                ]);
+                if ($res->successful()) {
+                    $moved++;
+                } else {
+                    $failed[] = $name;
+                }
+            }
+
+            return ['moved' => $moved, 'failed' => $failed];
+        } finally {
+            // Both steps always run; the first failure is rethrown.
+            $error = null;
+            try {
+                $this->disableUser($uid);
+            } catch (NextcloudException $e) {
+                $error = $e;
+            }
+            try {
+                $this->updateUser($uid, 'password', Str::password(40));
+            } catch (NextcloudException $e) {
+                $error ??= $e;
+            }
+            if ($error) {
+                throw $error;
+            }
+        }
+    }
+
+    /**
+     * Names at the root of the employee's tree that the employee owns.
+     * mount-type is "group" for team folders, "shared" for items shared with
+     * them, "" for their own files.
+     *
+     * @return list<string>
+     */
+    private function ownRootItems(string $uid, string $password): array
+    {
+        $body = '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns">'
+            .'<d:prop><nc:mount-type/></d:prop></d:propfind>';
+        $res = $this->davAs($uid, $password, 'PROPFIND', '', $body, 'application/xml', ['Depth' => '1']);
+        if ($res->status() === 401) {
+            // Most likely Nextcloud 2FA on this account: password login refused.
+            throw new NextcloudException('Nextcloud menolak masuk sementara sebagai pegawai (401). Periksa apakah akun memakai 2FA Nextcloud.', 401);
+        }
+        $this->davOk($res, 'PROPFIND', '/');
+
+        $dom = new \DOMDocument;
+        if (! @$dom->loadXML($res->body())) {
+            throw new NextcloudException('PROPFIND /: jawaban bukan XML');
+        }
+        $xp = new \DOMXPath($dom);
+        $xp->registerNamespace('d', 'DAV:');
+        $xp->registerNamespace('nc', 'http://nextcloud.org/ns');
+
+        $names = [];
+        foreach ($xp->query('//d:response') as $response) {
+            $href = rtrim(rawurldecode($xp->evaluate('string(d:href)', $response)), '/');
+            if (str_ends_with($href, '/files/'.$uid)) {
+                continue; // the root itself
+            }
+            if (trim($xp->evaluate('string(.//nc:mount-type)', $response)) !== '') {
+                continue;
+            }
+            $names[] = substr($href, strrpos($href, '/') + 1);
+        }
+
+        return $names;
+    }
+
     private function dav(string $method, string $path, ?string $body = null, ?string $mime = null, array $headers = []): Response
     {
-        $segments = array_map('rawurlencode', array_filter(explode('/', $path), fn ($s) => $s !== ''));
-        $url = $this->baseUrl.'/remote.php/dav/files/'.rawurlencode($this->user).'/'.implode('/', $segments);
+        return $this->davAs($this->user, $this->appPassword, $method, $path, $body, $mime, $headers);
+    }
 
-        $request = Http::withBasicAuth($this->user, $this->appPassword)->timeout($this->timeout)->withHeaders($headers);
+    private function davUrl(string $user, string $path): string
+    {
+        $segments = array_map('rawurlencode', array_filter(explode('/', $path), fn ($s) => $s !== ''));
+
+        return $this->baseUrl.'/remote.php/dav/files/'.rawurlencode($user).'/'.implode('/', $segments);
+    }
+
+    private function davAs(string $user, string $password, string $method, string $path, ?string $body = null, ?string $mime = null, array $headers = []): Response
+    {
+        $url = $this->davUrl($user, $path);
+
+        $request = Http::withBasicAuth($user, $password)->timeout($this->timeout)->withHeaders($headers);
         if ($body !== null) {
             $request = $request->withBody($body, $mime ?? 'application/octet-stream');
         }

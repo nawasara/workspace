@@ -37,7 +37,8 @@
         "nawasara/vault": "*",
         "nawasara/auth-primitives": "*",
         "nawasara/keycloak": "*",
-        "nawasara/registry": "*"
+        "nawasara/registry": "*",
+        "nawasara/sync": "*"
     },
     "extra": {
         "laravel": {

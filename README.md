@@ -21,7 +21,7 @@ Bekerja bersama: `nawasara/vault` (kredensial), `nawasara/registry` (OPD),
 | Grup Vault `workspace` + tombol Uji | ✅ |
 | Peserta Pilot: daftar, tambah dari direktori Keycloak, cabut/hapus, kill switch (T-05) | ✅ |
 | API akses `GET /api/v1/workspace/access/{nip}`, scope `workspace.access.read` (T-06) | ✅ |
-| Sinkron grup Keycloak `workspace-pilot` (T-07) | ⏳ |
+| Sinkron grup Keycloak `workspace-pilot`: setelah perubahan + tiap 15 menit (T-07) | ✅ |
 | Akun Nextcloud untuk seluruh ASN, UID = NIP (T-10) | ⏳ |
 | Folder OPD, akses subfolder oleh anggota OPD (T-12, T-13) | ⏳ |
 | Kuota, templat, pegawai keluar, jejak akses | ⏳ |
@@ -109,6 +109,6 @@ Lewat remote-test (VM tes), dari root nawasara-dev:
 
 ```bash
 bash <skills>/tooling/remote-test.sh -- 'composer install -n && php artisan package:discover \
-  && for t in uji-koneksi-nextcloud uji-akses uji-peserta-pilot; do \
+  && for t in uji-koneksi-nextcloud uji-akses uji-peserta-pilot uji-grup-pilot; do \
      php packages/nawasara-workspace/tests/manual/$t.php; done'
 ```

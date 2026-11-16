@@ -32,6 +32,7 @@ class WorkspaceServiceProvider extends ServiceProvider
         }
 
         $this->registerLivewire();
+        $this->registerPilotSync();
 
         // Scopes before routes: the token UI hides scopes nobody registered,
         // so forgetting this would make the scope impossible to grant.
@@ -64,6 +65,35 @@ class WorkspaceServiceProvider extends ServiceProvider
             ->middleware(['api', 'api.auth', 'api.log'])
             ->name('nawasara-api.workspace.')
             ->group(__DIR__.'/../routes/api.php');
+    }
+
+    /**
+     * Keep the Keycloak group `workspace-pilot` in step with the pilot list:
+     * right after a change, and every 15 minutes as a safety net. Scheduled
+     * with $schedule->call(), not ->command() (AGENTS §7).
+     */
+    protected function registerPilotSync(): void
+    {
+        $dispatch = function () {
+            if (config('nawasara-workspace.sync_on_change', true)) {
+                Jobs\SyncPilotGroupJob::dispatch(triggerSource: 'event')->afterCommit();
+            }
+        };
+        Models\PilotMember::saved($dispatch);
+        Models\PilotMember::deleted($dispatch);
+        Models\Setting::saved($dispatch);
+
+        $this->app->booted(function () {
+            if (! $this->app->runningInConsole() || ! config('nawasara-workspace.scheduler.enabled', true)) {
+                return;
+            }
+
+            $this->app->make(\Illuminate\Console\Scheduling\Schedule::class)
+                ->call(fn () => Jobs\SyncPilotGroupJob::dispatch(triggerSource: 'scheduled'))
+                ->name('nawasara-workspace:sync-pilot-group')
+                ->everyFifteenMinutes()
+                ->withoutOverlapping(10);
+        });
     }
 
     public function registerLivewire(): void

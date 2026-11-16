@@ -20,6 +20,7 @@ $app['config']->set('database.default', 'uji');
 $app['config']->set('database.connections.uji', ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '', 'foreign_key_constraints' => true]);
 $app['db']->setDefaultConnection('uji');
 $app['config']->set('cache.default', 'array');
+$app['config']->set('nawasara-workspace.sync_on_change', false); // job sinkron grup diuji terpisah (uji-grup-pilot)
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;

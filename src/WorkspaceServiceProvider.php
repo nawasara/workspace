@@ -64,6 +64,18 @@ class WorkspaceServiceProvider extends ServiceProvider
             'Pemakaian dan kuota Drive (Nextcloud) dan Mail (cache WHM) seorang ASN per NIP, '
             .'untuk halaman Penyimpanan Kisara Akun. Read-only.',
         );
+
+        $this->app->make(\Nawasara\Api\Support\ScopeRegistry::class)->register(
+            'workspace.template.read',
+            'Daftar templat untuk pita "Mulai ... baru" seorang ASN per NIP: templat Aktif untuk semua OPD '
+            .'dan OPD-nya (Draf juga bagi admin Kisara). Untuk Workspace Web. Read-only.',
+        );
+
+        $this->app->make(\Nawasara\Api\Support\ScopeRegistry::class)->register(
+            'workspace.template.manage',
+            'Kelola Templat dari Workspace Web: daftar lengkap, unggah, ubah, ganti berkas, hapus. '
+            .'Setiap panggilan tetap ditolak kecuali `actor` (NIP) adalah admin Kisara.',
+        );
     }
 
     /** Mount routes/api.php at /api/v1/workspace. */

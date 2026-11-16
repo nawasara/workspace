@@ -332,12 +332,48 @@ class NextcloudAdminClient
         $this->davOk($this->dav('PUT', $path, $contents, $mime), 'PUT', $path);
     }
 
-    private function dav(string $method, string $path, ?string $body = null, ?string $mime = null): Response
+    /**
+     * Nextcloud file id of a file in the admin's tree, or null when it does
+     * not exist. The id is the same for every user who sees the file (a team
+     * folder file has one id), so Workspace Web can ask for its preview with
+     * the employee's own token. Overwriting a file with PUT keeps its id.
+     */
+    public function fileId(string $path): ?int
+    {
+        $body = '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">'
+            .'<d:prop><oc:fileid/></d:prop></d:propfind>';
+        $response = $this->dav('PROPFIND', $path, $body, 'application/xml', ['Depth' => '0']);
+        if ($response->status() === 404) {
+            return null;
+        }
+        $this->davOk($response, 'PROPFIND', $path);
+
+        // Prefix-agnostic: servers are free to pick the namespace prefix.
+        if (preg_match('#<(?:[A-Za-z0-9_-]+:)?fileid>\s*(\d+)\s*</#', $response->body(), $m) !== 1) {
+            throw new NextcloudException("PROPFIND {$path}: jawaban tanpa fileid");
+        }
+
+        return (int) $m[1];
+    }
+
+    /** Delete a file in the admin's tree. Already gone counts as done (true = deleted now). */
+    public function deleteFile(string $path): bool
+    {
+        $response = $this->dav('DELETE', $path);
+        if ($response->status() === 404) {
+            return false;
+        }
+        $this->davOk($response, 'DELETE', $path);
+
+        return true;
+    }
+
+    private function dav(string $method, string $path, ?string $body = null, ?string $mime = null, array $headers = []): Response
     {
         $segments = array_map('rawurlencode', array_filter(explode('/', $path), fn ($s) => $s !== ''));
         $url = $this->baseUrl.'/remote.php/dav/files/'.rawurlencode($this->user).'/'.implode('/', $segments);
 
-        $request = Http::withBasicAuth($this->user, $this->appPassword)->timeout($this->timeout);
+        $request = Http::withBasicAuth($this->user, $this->appPassword)->timeout($this->timeout)->withHeaders($headers);
         if ($body !== null) {
             $request = $request->withBody($body, $mime ?? 'application/octet-stream');
         }

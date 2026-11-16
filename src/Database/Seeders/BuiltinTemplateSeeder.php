@@ -4,6 +4,9 @@ namespace Nawasara\Workspace\Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+use Nawasara\Workspace\Models\Template;
 use Nawasara\Workspace\Services\NextcloudAdminClient;
 use Nawasara\Workspace\Services\NextcloudException;
 use Throwable;
@@ -27,8 +30,12 @@ use Throwable;
  *
  * Uses the admin account: this is Nawasara's control plane. Workspace Web
  * never does this; it reads the folder as the employee (ADR 0003).
- * Template metadata (names, order, scope) arrives with T-31; this seeder only
- * puts the files in place.
+ * Metadata rows (T-31): each file also gets a row in
+ * nawasara_workspace_templates, found by a stable `builtin_key` (slug of the
+ * file name). A missing row is created Active, for every OPD, in the FR-15
+ * order. An existing row only gets its file facts refreshed (file id,
+ * size): name, status, order and scope belong to admin Kisara once the row
+ * exists, so a rerun never undoes their choices.
  */
 class BuiltinTemplateSeeder extends Seeder
 {
@@ -42,6 +49,13 @@ class BuiltinTemplateSeeder extends Seeder
 
     public const ALL = 31; // read, write, create, delete, share
 
+    /** FR-15 AC-1 order: the ribbon shows them in this order within each app. */
+    public const ORDER = [
+        'Nota Dinas', 'Surat Undangan', 'Notulen Rapat', 'Laporan Kegiatan', 'Telaahan Staf',
+        'Anggaran Kegiatan', 'Daftar Hadir', 'Rekap Absensi', 'Inventaris Aset', 'Jadwal Piket',
+        'Paparan Pemkab', 'Laporan Bulanan', 'Sosialisasi', 'Rapat Pimpinan',
+    ];
+
     public function __construct(private ?NextcloudAdminClient $nc = null) {}
 
     public function run(): void
@@ -52,14 +66,16 @@ class BuiltinTemplateSeeder extends Seeder
     }
 
     /**
-     * @return array{configured: bool, folder_id: ?int, folder_created: bool, groups_fixed: int, files: int, created: int, updated: int, unchanged: int, failed: int}
+     * @return array{configured: bool, folder_id: ?int, folder_created: bool, groups_fixed: int, files: int, created: int, updated: int, unchanged: int, failed: int, rows_created: int, rows_updated: int}
      */
     public function seed(): array
     {
         $nc = $this->nc ?? app(NextcloudAdminClient::class);
         $folderName = (string) config('nawasara-workspace.templates.folder', 'Templat Kisara');
         $stats = ['configured' => true, 'folder_id' => null, 'folder_created' => false, 'groups_fixed' => 0,
-            'files' => 0, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'failed' => 0];
+            'files' => 0, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'failed' => 0,
+            'rows_created' => 0, 'rows_updated' => 0];
+        $withRows = Schema::hasTable((new Template)->getTable());
 
         if (! $nc->isConfigured()) {
             Log::warning('workspace.templates.seed_skipped', ['reason' => 'nextcloud_not_configured']);
@@ -91,16 +107,23 @@ class BuiltinTemplateSeeder extends Seeder
                 $local = (string) file_get_contents($path);
                 $remote = $nc->downloadFile($remotePath);
 
+                $written = false;
                 if ($remote !== null && hash_equals(hash('sha256', $remote), hash('sha256', $local))) {
                     $stats['unchanged']++;
-
-                    continue;
+                } else {
+                    $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+                    $nc->uploadFile($remotePath, $local, self::MIME[$ext] ?? 'application/octet-stream');
+                    $stats[$remote === null ? 'created' : 'updated']++;
+                    $written = true;
+                    Log::info('workspace.templates.uploaded', ['file' => $name, 'action' => $remote === null ? 'created' : 'replaced', 'bytes' => strlen($local)]);
                 }
 
-                $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
-                $nc->uploadFile($remotePath, $local, self::MIME[$ext] ?? 'application/octet-stream');
-                $stats[$remote === null ? 'created' : 'updated']++;
-                Log::info('workspace.templates.uploaded', ['file' => $name, 'action' => $remote === null ? 'created' : 'replaced', 'bytes' => strlen($local)]);
+                if ($withRows) {
+                    $row = $this->upsertRow($nc, $name, $remotePath, strlen($local), $written);
+                    if ($row !== null) {
+                        $stats[$row]++;
+                    }
+                }
             } catch (NextcloudException $e) {
                 $stats['failed']++;
                 Log::warning('workspace.templates.upload_failed', ['file' => $name, 'reason' => mb_substr($e->getMessage(), 0, 300)]);
@@ -110,6 +133,52 @@ class BuiltinTemplateSeeder extends Seeder
         Log::info('workspace.templates.seed_finished', $stats + ['duration_ms' => (int) ((microtime(true) - $started) * 1000)]);
 
         return $stats;
+    }
+
+    /** Stable key of a built-in file: "Nota Dinas.docx" -> "nota-dinas". */
+    public static function builtinKey(string $fileName): string
+    {
+        return Str::slug(pathinfo($fileName, PATHINFO_FILENAME));
+    }
+
+    /**
+     * The metadata row of one built-in file. Asks Nextcloud for the file id
+     * only when it can have changed (new row, unknown id, file just written),
+     * so an idle rerun stays free of PROPFINDs.
+     *
+     * @return 'rows_created'|'rows_updated'|null
+     */
+    private function upsertRow(NextcloudAdminClient $nc, string $fileName, string $remotePath, int $size, bool $written): ?string
+    {
+        $key = self::builtinKey($fileName);
+        $row = Template::where('builtin_key', $key)->first();
+
+        if ($row === null) {
+            $title = pathinfo($fileName, PATHINFO_FILENAME);
+            $app = Template::appForExtension(pathinfo($fileName, PATHINFO_EXTENSION));
+            $pos = array_search($title, self::ORDER, true);
+            Template::create([
+                'name' => $title,
+                'app' => $app,
+                'scope' => Template::SCOPE_ALL,
+                'status' => Template::STATUS_ACTIVE,
+                // Gaps of 10 leave room for admin templates in between.
+                'sort_order' => $pos === false ? 1000 : ($pos + 1) * 10,
+                'file_name' => $fileName,
+                'file_id' => $nc->fileId($remotePath),
+                'size_bytes' => $size,
+                'builtin_key' => $key,
+            ]);
+
+            return 'rows_created';
+        }
+
+        if (! $written && $row->file_id !== null && $row->size_bytes === $size && $row->file_name === $fileName) {
+            return null;
+        }
+        $row->update(['file_name' => $fileName, 'file_id' => $nc->fileId($remotePath), 'size_bytes' => $size]);
+
+        return $row->wasChanged() ? 'rows_updated' : null;
     }
 
     /** @return list<string> absolute paths, sorted */

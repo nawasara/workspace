@@ -30,8 +30,9 @@ Bekerja bersama: `nawasara/vault` (kredensial), `nawasara/registry` (OPD),
 | Penyimpangan Kuota: kuota sendiri per pegawai / per Folder OPD, dengan alasan dan pelaku (T-14) | ✅ |
 | Kuota `GET /api/v1/workspace/quota/{nip}`, scope `workspace.quota.read`: Drive (Nextcloud) + Mail (cache WHM) untuk halaman Penyimpanan Kisara Akun (T-29) | ✅ |
 | 14 templat bawaan Kisara di Team Folder "Templat Kisara", baca saja bagi pegawai (T-21) | ✅ |
+| Tabel templat (UUID) + API: pita `GET /api/v1/workspace/templates`, kelola `.../templates/manage`, unggah, ubah, ganti berkas, hapus (T-31) | ✅ |
 | Layar atur akses subfolder di Workspace Web (T-13) | ⏳ |
-| Kelola Templat (metadata, unggah admin; T-31, T-32), pegawai keluar, jejak akses | ⏳ |
+| Layar Kelola Templat di Workspace Web (T-32), gambar mini templat, pegawai keluar, jejak akses | ⏳ |
 
 ## Setup
 
@@ -177,8 +178,12 @@ Keputusan:
   (kecil, puluhan KB) dan membandingkan sha256. Yang sama dilewati, yang beda
   diganti, yang tidak ada diunggah. Putaran ulang tanpa perubahan tidak
   menulis apa pun.
-- **Metadata templat (nama, urutan, cakupan OPD) belum ada di sini**: datang
-  bersama tabel templat T-31. Seeder ini hanya menaruh berkas.
+- **Seeder juga membuat baris metadata** (T-31), dicari lewat `builtin_key`
+  (slug nama berkas, mis. `nota-dinas`). Baris yang belum ada dibuat Aktif,
+  untuk semua OPD, urutan FR-15 (10, 20, ... per app). Baris yang sudah ada
+  hanya diperbarui fakta berkasnya (`file_id`, ukuran): nama, status, urutan,
+  dan cakupan milik admin Kisara, jadi menjalankan seeder lagi tidak
+  membatalkan pilihan mereka.
 - **Belum diverifikasi di OnlyOffice sungguhan**: membuka tiap templat di
   editor tanpa galat format perlu stack Workspace nyata (LXC 145).
 
@@ -309,12 +314,119 @@ Keputusan kuota API:
 - **Pesan galat sumber tidak ikut jawaban**, hanya dicatat
   (`workspace.quota.source_unavailable`, tanpa NIP).
 
+## Templat: tabel dan API (T-31)
+
+Tabel `nawasara_workspace_templates`, PK **UUID v7** (`HasUuids`): id-nya
+keluar ke Workspace Web dan muncul di URL layar Kelola Templat (AGENTS §10a).
+Kolom: `name`, `description`, `app` (`docs|sheets|slides`), `scope`
+(`all|opd`) + `opd_id`, `status` (`draft|active|inactive`), `sort_order`,
+`file_name` (di folder "Templat Kisara"), `file_id`, `size_bytes`,
+`builtin_key` (hanya 14 templat bawaan), `created_by`/`updated_by`.
+
+Dua scope token, keduanya untuk Workspace Web:
+
+| Scope | Jalur |
+|---|---|
+| `workspace.template.read` | `GET /templates?nip=&app=` |
+| `workspace.template.manage` | `GET /templates/manage`, `POST /templates`, `PATCH /templates/{id}`, `POST /templates/{id}/file`, `DELETE /templates/{id}` |
+
+Bentuk satu templat (sama di semua jawaban; daftar-izin `TemplateResource`):
+
+```json
+{ "id": "01a1e691-e230-725e-b625-7d7e295ed811", "name": "Nota Dinas",
+  "description": null, "app": "docs", "extension": "docx",
+  "scope": "all", "opd": null, "status": "active", "sort_order": 10,
+  "builtin": true, "path": "Templat Kisara/Nota Dinas.docx",
+  "file_id": 1234, "size_bytes": 35975, "updated_at": "2026-11-17T08:00:00+00:00" }
+```
+
+`opd` = `{ "id": 8, "name": "Dinas Pendidikan" }` bila `scope` `opd`.
+
+**Pita** `GET /templates?nip=<NIP>&app=<docs|sheets|slides>` (`app` opsional):
+
+```json
+{ "data": [ <templat>, ... ],
+  "meta": { "nip": "...", "app": "docs", "opd_id": 7, "drafts_included": false } }
+```
+
+Isi: Aktif dengan cakupan semua OPD, ditambah Aktif untuk OPD si pegawai
+(FR-16 AC-4). Bagi admin Kisara ditambah semua Draf (cakupan apa pun), untuk
+dicoba (AC-3); `drafts_included` `true` dan `status` tiap templat memberi
+tahu mana yang Draf. Nonaktif tidak pernah tampil. Urut: Docs, Sheets,
+Slides, lalu `sort_order`, lalu nama. Galat: `422 invalid_nip`,
+`422 invalid_app`.
+
+**Kelola Templat** (semua butuh `actor` = NIP admin Kisara; GET/DELETE di
+query, POST/PATCH di badan):
+
+| Panggilan | Badan | Jawaban |
+|---|---|---|
+| `GET /templates/manage?actor=&app=&status=` | | 200 `{data: [templat], meta: {total, max_upload_mb}}`, semua status |
+| `POST /templates` | multipart: `actor`, `name`, `description?`, `scope`, `opd_id` (wajib bila `scope=opd`), `sort_order?`, `file` | 201 `{data: templat}`, selalu `draft`; `app` dari ekstensi; `sort_order` bawaan = terbesar di app itu + 10 |
+| `PATCH /templates/{id}` | JSON: `actor` + salah satu `name`, `description`, `scope`, `opd_id`, `status`, `sort_order` | 200 `{data: templat}`; `scope=all` mengosongkan `opd` |
+| `POST /templates/{id}/file` | multipart: `actor`, `file` (ekstensi sama) | 200 `{data: templat}`; jalur dan `file_id` tetap |
+| `DELETE /templates/{id}?actor=` | | 200 `{data: {id, deleted: true}}` |
+
+Galat (semuanya `{error: {code, message}}`): `422 invalid_actor`,
+`403 not_admin`, `404 not_found`, `409 builtin_template` (ganti berkas atau
+hapus templat bawaan), `422 validation_failed` (plus `error.fields: {field:
+[pesan]}`), `502 nextcloud_unavailable`, `503 nextcloud_not_configured`,
+`401`/`403 insufficient_scope` dari middleware.
+
+Keputusan:
+
+- **Siapa admin: token ber-scope `workspace.template.manage` DAN `actor`
+  yang admin Kisara.** Scope hanya membuktikan pemanggilnya Workspace Web;
+  `actor` (NIP pegawai yang sedang masuk di Workspace Web) harus punya akun
+  lokal Nawasara ber-izin `workspace.template.manage`. Aturannya satu
+  (`Services/WorkspaceAdmins`), dipakai juga oleh `is_admin` API akses, jadi
+  menu Kelola Templat dan izin menulis tidak bisa berbeda pendapat. Tidak ada
+  admin OPD (D-03): templat bercakupan satu OPD pun dikelola admin Kisara.
+  Pengerasan berikutnya bila perlu: Workspace Web meneruskan token Keycloak
+  pegawai dan Nawasara memverifikasinya (`api.staff`), sehingga `actor` tidak
+  bergantung pada kejujuran pemegang token layanan.
+- **Jawaban memuat `path` dan `file_id`**, tidak lebih. `path` (relatif ke
+  akar Nextcloud pegawai) cukup untuk menyalin templat dengan token pegawai
+  (WebDAV COPY); `file_id` untuk gambar mini lewat preview Nextcloud. Keduanya
+  memang terlihat oleh setiap pegawai di Nextcloud. Pembuat/pengubah tidak
+  ikut: Workspace Web tidak memakainya, jejaknya ada di log aktivitas
+  `workspace`.
+- **Cakupan OPD adalah penyaring tampilan, bukan batas keamanan.** Folder
+  "Templat Kisara" dapat dibaca semua pegawai; templat OPD lain tidak rahasia,
+  hanya tidak relevan. Isi templat memang tidak boleh berisi data pribadi.
+- **OPD pegawai dari `OpdResolver`** (override peserta pilot, lalu
+  `simas_skpd` Keycloak), aturan yang sama dengan grup `OPD-*` di Nextcloud.
+- **Draf awal** (FR-16 AC-2): unggahan baru tidak langsung sampai ke pita
+  semua pegawai.
+- **Isi berkas diperiksa**, bukan hanya ekstensi: harus zip OOXML dengan
+  bagian `word/`, `xl/`, atau `ppt/` yang cocok. PDF yang diganti nama tidak
+  sampai ke pita. Batas `templates.max_upload_mb` (20); `upload_max_filesize`
+  dan `post_max_size` PHP harus minimal sebesar itu.
+- **Nama berkas dari nama templat, tidak pernah menimpa**: nama yang sudah
+  dipakai mendapat akhiran " (2)". Mengganti nama templat tidak mengganti nama
+  berkas; berkas buatan pegawai berjudul "Tanpa judul" (FR-05 AC-3) jadi nama
+  berkas templat tidak terlihat oleh pegawai di alur normal.
+- **Hapus = baris + berkas templat itu saja.** Berkas yang sudah dibuat
+  pegawai adalah salinan di Drive/Folder OPD mereka dan tidak tersentuh
+  (FR-16 AC-5, FR-05 AC-4). Berkas dihapus dulu; bila Nextcloud gagal, baris
+  tetap ada supaya admin bisa mengulang. Konfirmasi ditanyakan Workspace Web.
+- **Hapus lewat API tanpa sudo.** `#[RequiresSudo]` adalah gerbang Livewire
+  di panel Nawasara; pemanggil API ini Workspace Web dengan token layanan.
+  Penjaganya: scope khusus + `actor` admin + konfirmasi di Workspace Web +
+  log aktivitas dengan pelaku.
+- **Templat bawaan tidak dapat dihapus atau diganti berkasnya** (409):
+  berkasnya milik paket dan seeder akan mengembalikannya. Nonaktifkan saja;
+  nama, urutan, dan cakupannya boleh diubah.
+- **Kolom `builtin` tidak disimpan terpisah**: `builtin` = `builtin_key` terisi.
+- **Gambar mini belum dibuat di sini** (FR-16 AC-2): Workspace Web memintanya
+  dari preview Nextcloud dengan `file_id`.
+
 ## Uji
 
 Lewat remote-test (VM tes), dari root nawasara-dev:
 
 ```bash
 bash <skills>/tooling/remote-test.sh -- 'composer install -n && php artisan package:discover \
-  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api uji-templat-bawaan; do \
+  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api uji-templat-bawaan uji-templat-api; do \
      php packages/nawasara-workspace/tests/manual/$t.php; done'
 ```

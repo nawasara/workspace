@@ -57,12 +57,16 @@ return [
     | Built-in templates (T-21, FR-15): BuiltinTemplateSeeder puts the files of
     | resources/templates/ in this team folder. admin_group writes (the
     | Nawasara admin account must be in it); reader_groups plus every OPD-*
-    | group with a Folder OPD read only.
+    | group with a Folder OPD read only. Metadata (name, order, scope,
+    | status) is the nawasara_workspace_templates table (T-31).
     */
     'templates' => [
         'folder' => 'Templat Kisara',
         'admin_group' => 'admin',
         'reader_groups' => ['workspace-pilot'],
+        // Kelola Templat upload limit (FR-16 AC-2). PHP upload_max_filesize
+        // and post_max_size must be at least this.
+        'max_upload_mb' => 20,
     ],
 
     /*

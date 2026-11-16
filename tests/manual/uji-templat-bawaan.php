@@ -2,7 +2,9 @@
 /*
  * Uji T-21: BuiltinTemplateSeeder terhadap Nextcloud tiruan di tingkat HTTP
  * (Http::fake), jadi NextcloudAdminClient yang asli ikut teruji: jalur
- * groupfolders, OCS grup, dan WebDAV (GET/PUT) beserta hak tulis per grup.
+ * groupfolders, OCS grup, dan WebDAV (GET/PUT/PROPFIND/DELETE) beserta hak
+ * tulis per grup. Sejak T-31 juga baris metadata (14 templat bawaan) di
+ * SQLite di memori.
  */
 
 $root = dirname(__DIR__, 4);
@@ -10,10 +12,17 @@ require $root.'/vendor/autoload.php';
 $app = require $root.'/bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
+$app['config']->set('database.default', 'uji');
+$app['config']->set('database.connections.uji', ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+$app['db']->setDefaultConnection('uji');
+$app['config']->set('nawasara-workspace.sync_on_change', false);
+
 use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
+use Nawasara\Workspace\Models\Template;
 use Nawasara\Workspace\Database\Seeders\BuiltinTemplateSeeder;
 use Nawasara\Workspace\Services\NextcloudAdminClient;
 use Nawasara\Workspace\Services\NextcloudException;
@@ -26,6 +35,15 @@ $cek = function (string $label, bool $ok, string $detail = '') use (&$gagal) {
 
 const BASE = 'http://10.1.1.37:8080/nc';
 
+Schema::create('users', function ($t) { $t->id(); $t->string('name'); $t->string('username')->nullable(); $t->timestamps(); });
+Schema::create('nawasara_registry_opd', function ($t) { $t->id(); $t->string('code'); $t->string('name'); $t->timestamps(); });
+Schema::create('activity_log', function ($t) {
+    $t->id(); $t->string('log_name')->nullable(); $t->text('description');
+    $t->nullableMorphs('subject'); $t->nullableMorphs('causer'); $t->json('properties')->nullable();
+    $t->uuid('batch_uuid')->nullable(); $t->string('event')->nullable(); $t->timestamps();
+});
+foreach (glob($root.'/packages/nawasara-workspace/database/migrations/*.php') as $f) { (require $f)->up(); }
+
 /** Nextcloud tiruan: grup, keanggotaan, Team Folders, dan berkas per Team Folder. */
 class NcHttpPalsu
 {
@@ -37,7 +55,9 @@ class NcHttpPalsu
     ];
     public array $writes = [];
     public array $failPut = [];
+    public array $fileIds = []; // "mount/file" => Nextcloud file id, kept on overwrite
     private int $nextId = 3;
+    private int $nextFileId = 1000;
 
     public function handle(Request $r)
     {
@@ -118,6 +138,25 @@ class NcHttpPalsu
         if ($m === 'GET') {
             return isset($this->folders[$id]['files'][$file]) ? Http::response($this->folders[$id]['files'][$file]) : Http::response('', 404);
         }
+        if ($m === 'PROPFIND') {
+            if (! isset($this->folders[$id]['files'][$file])) {
+                return Http::response('', 404);
+            }
+            $fid = $this->fileIds["{$mount}/{$file}"];
+            return Http::response('<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:response>'
+                ."<d:href>/x</d:href><d:propstat><d:prop><oc:fileid>{$fid}</oc:fileid></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>", 207);
+        }
+        if ($m === 'DELETE') {
+            if (! isset($this->folders[$id]['files'][$file])) {
+                return Http::response('', 404);
+            }
+            if (($this->perm($user, $id) & 8) === 0) {
+                return Http::response('', 403);
+            }
+            $this->writes[] = "DELETE {$mount}/{$file}";
+            unset($this->folders[$id]['files'][$file]);
+            return Http::response('', 204);
+        }
         if ($m === 'PUT') {
             if (in_array($file, $this->failPut, true)) {
                 return Http::response('', 507);
@@ -128,6 +167,7 @@ class NcHttpPalsu
             $this->writes[] = "PUT {$mount}/{$file}";
             $existed = isset($this->folders[$id]['files'][$file]);
             $this->folders[$id]['files'][$file] = $r->body();
+            $this->fileIds["{$mount}/{$file}"] ??= $this->nextFileId++;
             return Http::response('', $existed ? 204 : 201);
         }
         return Http::response('', 405);
@@ -184,12 +224,27 @@ $cek('grup: admin 31, pilot + semua OPD-* hanya baca (1)',
 $cek('grup workspace-pilot dipastikan ada', isset($nc->groups['workspace-pilot']));
 $put = array_values(array_filter($sent, fn ($r) => $r->method() === 'PUT'));
 $cek('WebDAV PUT ke berkas admin, jalur di-encode', ($put[0] ?? null) && str_starts_with($put[0]->url(), BASE.'/remote.php/dav/files/kisara-admin/Templat%20Kisara/') && str_contains($put[0]->url(), '%20'), $put[0]?->url() ?? '-');
+$rows = Template::orderBy('app')->orderBy('sort_order')->get();
+$cek('14 baris metadata dibuat (T-31)', $s['rows_created'] === 14 && $rows->count() === 14, json_encode($s));
+$cek('semua Aktif, untuk semua OPD, bertanda bawaan', $rows->every(fn ($t) => $t->status === 'active' && $t->scope === 'all' && $t->opd_id === null && $t->isBuiltin()));
+$nd = Template::where('builtin_key', 'nota-dinas')->first();
+$cek('kunci stabil = slug nama berkas; UUID', $nd && $nd->name === 'Nota Dinas' && $nd->app === 'docs' && Illuminate\Support\Str::isUuid($nd->id));
+$cek('file_id dari PROPFIND, ukuran sesuai', $nd->file_id === $nc->fileIds['Templat Kisara/Nota Dinas.docx'] && $nd->size_bytes === strlen($t['files']['Nota Dinas.docx']));
+$cek('urutan FR-15 per app (10, 20, ...)',
+    Template::where('app', 'docs')->orderBy('sort_order')->pluck('name')->all() === ['Nota Dinas', 'Surat Undangan', 'Notulen Rapat', 'Laporan Kegiatan', 'Telaahan Staf']
+    && Template::where('app', 'slides')->orderBy('sort_order')->pluck('sort_order')->all() === [110, 120, 130, 140]
+    && Template::where('app', 'sheets')->count() === 5);
 $cek('Content-Type OOXML yang benar', ($put[0] ?? null) && str_starts_with($put[0]->header('Content-Type')[0] ?? '', 'application/vnd.openxmlformats-officedocument.'));
 
 echo "\n=== putaran kedua: idempoten ===\n";
 $nc->writes = [];
+Template::where('builtin_key', 'nota-dinas')->update(['name' => 'Nota Dinas (diubah admin)', 'status' => 'inactive', 'sort_order' => 99]);
+$sent = [];
 $s = $seeder()->seed();
 $cek('tanpa tulisan apa pun ke Nextcloud', $nc->writes === [] && $s['unchanged'] === 14 && $s['folder_created'] === false && $s['groups_fixed'] === 0, json_encode($nc->writes));
+$cek('tanpa PROPFIND dan tanpa baris baru/diubah', ! collect($sent)->contains(fn ($r) => $r->method() === 'PROPFIND') && $s['rows_created'] === 0 && $s['rows_updated'] === 0 && Template::count() === 14, json_encode($s));
+$nd = Template::where('builtin_key', 'nota-dinas')->first();
+$cek('pilihan admin (nama, status, urutan) tidak dibatalkan', $nd->name === 'Nota Dinas (diubah admin)' && $nd->status === 'inactive' && $nd->sort_order === 99);
 
 echo "\n=== berkas sumber berubah ===\n";
 $tmp = sys_get_temp_dir().'/uji-templat-'.getmypid();
@@ -204,6 +259,8 @@ $nc->writes = [];
 $s = $ubah->seed();
 $cek('hanya berkas yang berubah diunggah ulang', $s['updated'] === 1 && $s['unchanged'] === 13 && $nc->writes === ['PUT Templat Kisara/Nota Dinas.docx'], json_encode($nc->writes));
 $cek('isi di Nextcloud kini versi baru', str_ends_with($nc->templat()['files']['Nota Dinas.docx'], 'x'));
+$nd2 = Template::where('builtin_key', 'nota-dinas')->first();
+$cek('baris: ukuran diperbarui, file_id tetap, pilihan admin tetap', $s['rows_updated'] === 1 && $nd2->size_bytes === $nd->size_bytes + 1 && $nd2->file_id === $nd->file_id && $nd2->name === 'Nota Dinas (diubah admin)', json_encode($s));
 array_map('unlink', glob($tmp.'/*'));
 @rmdir($tmp);
 
@@ -224,6 +281,17 @@ $tolak = null;
 try { $pegawai->uploadFile('Templat Kisara/Nota Dinas.docx', 'rusak'); } catch (NextcloudException $e) { $tolak = $e->httpStatus; }
 $cek('pegawai TIDAK dapat menulis (403)', $tolak === 403);
 $cek('akun tanpa grup tidak melihat folder (404)', (new NextcloudAdminClient(BASE, 'orang-luar', 'pw'))->downloadFile('Templat Kisara/Nota Dinas.docx') === null);
+
+echo "\n=== klien: fileId dan deleteFile (T-31) ===\n";
+$cek('fileId berkas ada = id Nextcloud', $admin->fileId('Templat Kisara/Daftar Hadir.xlsx') === $nc->fileIds['Templat Kisara/Daftar Hadir.xlsx']);
+$cek('fileId berkas tidak ada = null', $admin->fileId('Templat Kisara/tidak-ada.docx') === null);
+$propfind = collect($sent)->last(fn ($r) => $r->method() === 'PROPFIND');
+$cek('PROPFIND Depth 0 meminta oc:fileid', $propfind && ($propfind->header('Depth')[0] ?? null) === '0' && str_contains($propfind->body(), 'oc:fileid'));
+$admin->uploadFile('Templat Kisara/Hapus Saya.docx', 'x');
+$cek('deleteFile menghapus (true), kedua kali tidak ada (false)', $admin->deleteFile('Templat Kisara/Hapus Saya.docx') === true && $admin->deleteFile('Templat Kisara/Hapus Saya.docx') === false && ! isset($nc->templat()['files']['Hapus Saya.docx']));
+$tolak = null;
+try { $pegawai->deleteFile('Templat Kisara/Nota Dinas.docx'); } catch (NextcloudException $e) { $tolak = $e->httpStatus; }
+$cek('pegawai TIDAK dapat menghapus templat (403)', $tolak === 403 && isset($nc->templat()['files']['Nota Dinas.docx']));
 
 echo "\n=== admin di luar grup admin ===\n";
 $nc->userGroups['kisara-admin'] = [];

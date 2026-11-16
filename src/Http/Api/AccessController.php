@@ -7,6 +7,7 @@ use Illuminate\Routing\Controller;
 use Nawasara\Registry\Models\Opd;
 use Nawasara\Workspace\Http\Resources\AccessResource;
 use Nawasara\Workspace\Services\AccessDecider;
+use Nawasara\Workspace\Services\WorkspaceAdmins;
 
 /**
  * GET /api/v1/workspace/access/{nip}   scope: workspace.access.read
@@ -30,19 +31,12 @@ class AccessController extends Controller
     }
 
     /**
-     * Admin Kisara = the local Nawasara account with this NIP holds
-     * `workspace.template.manage` (Kelola Templat in Workspace Web, T-32).
-     * Never true for someone who may not enter at all.
+     * Admin Kisara (WorkspaceAdmins: local account with this NIP holding
+     * `workspace.template.manage`), for Kelola Templat in Workspace Web
+     * (T-32). Never true for someone who may not enter at all.
      */
     private function isAdmin(string $nip, bool $allowed): bool
     {
-        if (! $allowed) {
-            return false;
-        }
-
-        $userModel = config('auth.providers.users.model');
-        $user = $userModel::where('username', $nip)->first();
-
-        return $user !== null && $user->can('workspace.template.manage');
+        return $allowed && app(WorkspaceAdmins::class)->isAdmin($nip);
     }
 }

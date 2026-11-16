@@ -229,10 +229,16 @@ class NextcloudAdminClient
     {
         $out = [];
         foreach ($this->ocs('get', $this->gf()) ?? [] as $f) {
+            // gid => permissions. Some groupfolders versions answer
+            // gid => {permissions, displayName, type}; both become an int.
+            $groups = [];
+            foreach ((array) ($f['groups'] ?? []) as $gid => $perm) {
+                $groups[(string) $gid] = (int) (is_array($perm) ? ($perm['permissions'] ?? 0) : $perm);
+            }
             $out[(int) $f['id']] = [
                 'id' => (int) $f['id'],
                 'mount_point' => (string) $f['mount_point'],
-                'groups' => (array) ($f['groups'] ?? []),
+                'groups' => $groups,
                 'quota' => (int) ($f['quota'] ?? -3),
                 'acl' => (bool) ($f['acl'] ?? false),
             ];
@@ -262,6 +268,12 @@ class NextcloudAdminClient
         }
     }
 
+    /** Change the permissions of a group already on the folder (1 = read only). */
+    public function setTeamFolderGroupPermissions(int $id, string $gid, int $permissions): void
+    {
+        $this->ocs('post', $this->gf("/{$id}/groups/".rawurlencode($gid)), ['permissions' => $permissions]);
+    }
+
     public function removeTeamFolderGroup(int $id, string $gid): void
     {
         $this->ocs('delete', $this->gf("/{$id}/groups/".rawurlencode($gid)));
@@ -285,6 +297,66 @@ class NextcloudAdminClient
     public function deleteTeamFolder(int $id): void
     {
         $this->ocs('delete', $this->gf("/{$id}"));
+    }
+
+    // ─── Files of the admin account (WebDAV) ─────────────
+
+    /** The admin account the client signs in as (its files live under its UID). */
+    public function adminUser(): string
+    {
+        return $this->user;
+    }
+
+    /**
+     * Contents of a file in the admin's own tree, e.g. "Templat Kisara/Nota
+     * Dinas.docx" (team folders appear there for the admin's groups). Null
+     * when the file does not exist.
+     *
+     * Only Nawasara control-plane jobs use this (built-in templates, T-21);
+     * Workspace Web reads files as the employee, never as admin (ADR 0003).
+     */
+    public function downloadFile(string $path): ?string
+    {
+        $response = $this->dav('GET', $path);
+        if ($response->status() === 404) {
+            return null;
+        }
+        $this->davOk($response, 'GET', $path);
+
+        return $response->body();
+    }
+
+    /** Create or replace a file in the admin's own tree (single PUT; small files only). */
+    public function uploadFile(string $path, string $contents, string $mime = 'application/octet-stream'): void
+    {
+        $this->davOk($this->dav('PUT', $path, $contents, $mime), 'PUT', $path);
+    }
+
+    private function dav(string $method, string $path, ?string $body = null, ?string $mime = null): Response
+    {
+        $segments = array_map('rawurlencode', array_filter(explode('/', $path), fn ($s) => $s !== ''));
+        $url = $this->baseUrl.'/remote.php/dav/files/'.rawurlencode($this->user).'/'.implode('/', $segments);
+
+        $request = Http::withBasicAuth($this->user, $this->appPassword)->timeout($this->timeout);
+        if ($body !== null) {
+            $request = $request->withBody($body, $mime ?? 'application/octet-stream');
+        }
+
+        try {
+            return $request->send($method, $url);
+        } catch (ConnectionException $e) {
+            throw new NextcloudException('Nextcloud tidak dapat dihubungi: '.$e->getMessage(), previous: $e);
+        }
+    }
+
+    private function davOk(Response $response, string $method, string $path): void
+    {
+        if ($response->status() === 401) {
+            throw new NextcloudException('Nextcloud menolak kredensial admin (401). Periksa app password di Vault.', 401);
+        }
+        if (! $response->successful()) {
+            throw new NextcloudException("{$method} {$path} gagal: HTTP ".$response->status(), $response->status());
+        }
     }
 
     // ─── Transport ──────────────────────────────────────

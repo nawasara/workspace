@@ -29,8 +29,9 @@ Bekerja bersama: `nawasara/vault` (kredensial), `nawasara/registry` (OPD),
 | Folder OPD: satu Team Folder per OPD, kuota 50 GB, ACL dikelola grup OPD sendiri (T-12) | ✅ |
 | Penyimpangan Kuota: kuota sendiri per pegawai / per Folder OPD, dengan alasan dan pelaku (T-14) | ✅ |
 | Kuota `GET /api/v1/workspace/quota/{nip}`, scope `workspace.quota.read`: Drive (Nextcloud) + Mail (cache WHM) untuk halaman Penyimpanan Kisara Akun (T-29) | ✅ |
+| 14 templat bawaan Kisara di Team Folder "Templat Kisara", baca saja bagi pegawai (T-21) | ✅ |
 | Layar atur akses subfolder di Workspace Web (T-13) | ⏳ |
-| Templat, pegawai keluar, jejak akses | ⏳ |
+| Kelola Templat (metadata, unggah admin; T-31, T-32), pegawai keluar, jejak akses | ⏳ |
 
 ## Setup
 
@@ -54,6 +55,16 @@ Lalu isi grup Vault **workspace** dan tekan **Uji**:
 | `base_url` | Alamat internal Nextcloud **termasuk `/nc`**, mis. `http://10.1.1.37:8080/nc` |
 | `admin_user` | Akun admin Nextcloud (mis. `kisara-admin`) |
 | `app_password` | **App password** akun itu, bukan sandi login |
+
+Setelah Vault terisi, pasang templat bawaan (aman diulang; yang sama
+dilewati):
+
+```bash
+php artisan db:seed --class="Nawasara\Workspace\Database\Seeders\BuiltinTemplateSeeder"
+```
+
+Jalankan ulang setelah ada OPD baru (grup `OPD-*` baru mendapat hak baca)
+atau setelah berkas templat diperbarui.
 
 ## Permissions
 
@@ -119,6 +130,57 @@ Lalu isi grup Vault **workspace** dan tekan **Uji**:
 - **`base_url` alamat internal**, bukan `https://docs.ponorogo.go.id/nc`.
   Port 8080 di LXC Workspace hanya menerima 10.1.1.30 (LXC Nawasara), dan
   jalur internal tidak melewati Cloudflare.
+
+## Templat bawaan (T-21)
+
+14 berkas di `resources/templates/`: Docs (Nota Dinas, Surat Undangan,
+Notulen Rapat, Laporan Kegiatan, Telaahan Staf), Sheets (Anggaran Kegiatan,
+Daftar Hadir, Rekap Absensi, Inventaris Aset, Jadwal Piket), Slides (Paparan
+Pemkab, Laporan Bulanan, Sosialisasi, Rapat Pimpinan). Dibuat oleh
+`tools/templates/generate.py` (Python 3.11, python-docx, openpyxl,
+python-pptx):
+
+```bash
+python tools/templates/generate.py --check   # tulis ulang 14 berkas + uji bolak-balik
+```
+
+Keputusan:
+
+- **Berkas sumber dan pembuatnya ada di paket ini, bukan di
+  `kisara-workspace-web/templates/`** seperti tertulis di brief T-21. Yang
+  mengunggah adalah seeder Nawasara, jadi berkasnya harus ikut terpasang
+  bersama paket (Packagist), bukan tinggal di repo aplikasi lain.
+- **Pembuat templat deterministik**: tanggal dokumen dan cap waktu tiap entri
+  zip dipatok (17 Nov 2026). Dijalankan dua kali hasilnya sama byte demi
+  byte. Tanpa itu, setiap kali dibuat ulang ke-14 hash berubah dan seeder
+  mengunggah ulang semuanya, walau isinya tidak berubah.
+- **Ubah templat lewat skrip, bukan dengan menyunting berkas .docx/.xlsx/.pptx
+  langsung**: suntingan tangan hilang saat skrip dijalankan lagi.
+- **Isi kerangka saja** (FR-15 AC-2): semua isian dalam `[kurung siku]`, tanpa
+  nama, NIP, atau angka nyata. Pemeriksaan `--check` menolak angka 18 digit.
+  Tanda "Kisara (bawaan)" ada di properti dokumen (penulis, kata kunci,
+  komentar) dan di kaki halaman.
+- **Rumus hanya yang wajar**: Jumlah = Volume x Harga dan total di Anggaran
+  dan Inventaris, hitung H/S/I/C/DL/TK dan persen hadir di Rekap Absensi,
+  nama hari dari tanggal di Jadwal Piket, jumlah hadir di Daftar Hadir.
+- **Folder "Templat Kisara" adalah Team Folder**: grup `admin` Nextcloud hak
+  penuh (31), selain itu baca saja (1): grup `templates.reader_groups`
+  (bawaan `workspace-pilot`) ditambah setiap grup `OPD-*` yang punya Folder
+  OPD. Grup lain yang ditambahkan tangan dibiarkan, tetapi diturunkan ke baca
+  saja. Pegawai menyalin templat ke Drive-nya sendiri; tidak ada yang
+  menyunting aslinya.
+- **Unggah memakai akun admin**: ini *control plane* Nawasara. Workspace Web
+  tetap hanya membaca sebagai pegawai (ADR 0003). Akun admin harus anggota
+  `templates.admin_group` supaya folder terlihat lewat WebDAV; seeder
+  memasukkannya bila belum.
+- **Bandingkan hash isi, bukan ETag/ukuran**: seeder mengunduh berkas yang ada
+  (kecil, puluhan KB) dan membandingkan sha256. Yang sama dilewati, yang beda
+  diganti, yang tidak ada diunggah. Putaran ulang tanpa perubahan tidak
+  menulis apa pun.
+- **Metadata templat (nama, urutan, cakupan OPD) belum ada di sini**: datang
+  bersama tabel templat T-31. Seeder ini hanya menaruh berkas.
+- **Belum diverifikasi di OnlyOffice sungguhan**: membuka tiap templat di
+  editor tanpa galat format perlu stack Workspace nyata (LXC 145).
 
 ## Roadmap
 
@@ -253,6 +315,6 @@ Lewat remote-test (VM tes), dari root nawasara-dev:
 
 ```bash
 bash <skills>/tooling/remote-test.sh -- 'composer install -n && php artisan package:discover \
-  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api; do \
+  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api uji-templat-bawaan; do \
      php packages/nawasara-workspace/tests/manual/$t.php; done'
 ```

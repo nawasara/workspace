@@ -54,6 +54,18 @@ return [
     ],
 
     /*
+    | Built-in templates (T-21, FR-15): BuiltinTemplateSeeder puts the files of
+    | resources/templates/ in this team folder. admin_group writes (the
+    | Nawasara admin account must be in it); reader_groups plus every OPD-*
+    | group with a Folder OPD read only.
+    */
+    'templates' => [
+        'folder' => 'Templat Kisara',
+        'admin_group' => 'admin',
+        'reader_groups' => ['workspace-pilot'],
+    ],
+
+    /*
     | Quota API for the Penyimpanan page of Kisara Akun (T-29). Drive answers
     | are cached per NIP so reloads do not reach Nextcloud each time; a failed
     | read is cached shorter. warning_percent = "Hampir penuh" (FR-14 AC-2).

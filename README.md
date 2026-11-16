@@ -23,8 +23,10 @@ Bekerja bersama: `nawasara/vault` (kredensial), `nawasara/registry` (OPD),
 | API akses `GET /api/v1/workspace/access/{nip}`, scope `workspace.access.read` (T-06) | ✅ |
 | Sinkron grup Keycloak `workspace-pilot`: setelah perubahan + tiap 15 menit (T-07) | ✅ |
 | Klien admin Nextcloud: akun, grup, kuota, Team Folders + ACL (T-09) | ✅ |
-| Akun Nextcloud untuk seluruh ASN, UID = NIP (T-10) | ⏳ |
-| Folder OPD, akses subfolder oleh anggota OPD (T-12, T-13) | ⏳ |
+| Akun Nextcloud untuk seluruh ASN dari cache Keycloak, UID = NIP, bertahap per putaran (T-10) | ✅ |
+| OPD tiap pegawai dari `simas_skpd` (cocok utuh), override peserta pilot (T-11) | ✅ |
+| Folder OPD: satu Team Folder per OPD, kuota 50 GB, ACL dikelola grup OPD sendiri (T-12) | ✅ |
+| Layar atur akses subfolder di Workspace Web (T-13) | ⏳ |
 | Kuota, templat, pegawai keluar, jejak akses | ⏳ |
 
 ## Setup
@@ -63,6 +65,18 @@ Lalu isi grup Vault **workspace** dan tekan **Uji**:
 | `workspace.audit.view` | Jejak akses |
 
 ## Keputusan yang mudah dibatalkan tanpa tahu alasannya
+
+- **Akun dibuat untuk SELURUH ASN, bukan hanya peserta pilot** (FR-10): supaya
+  siapa pun bisa dicari dan dibagikan berkas sejak hari pertama. Mereka tetap
+  tidak bisa masuk sebelum lolos gerbang pilot.
+- **Tabel `nawasara_workspace_accounts` + `state_hash`**: tiap putaran hanya
+  menulis akun yang baru/berubah. Tanpa itu, setiap 15 menit ~11 000 panggilan
+  ke Nextcloud. Maks `provision_batch` (1000) tulisan per putaran; putaran
+  pertama dicicil.
+- **OPD dicocokkan UTUH**, bukan awalan, dan peta OPD dimuat sekali per
+  putaran (UnitKerjaMatcher bawaan memuat semua OPD per panggilan).
+- **Hanya grup `OPD-*` yang diatur sinkron akun.** Grup lain (`workspace-pilot`
+  dari user_oidc) tidak pernah disentuh.
 
 - **Team Folders di `/index.php/apps/groupfolders/folders?format=json`, bukan
   `/ocs/v2.php`.** Pada groupfolders 19.1.20 (Nextcloud 31) jalur OCS v2 menjawab
@@ -115,6 +129,6 @@ Lewat remote-test (VM tes), dari root nawasara-dev:
 
 ```bash
 bash <skills>/tooling/remote-test.sh -- 'composer install -n && php artisan package:discover \
-  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot; do \
+  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning; do \
      php packages/nawasara-workspace/tests/manual/$t.php; done'
 ```

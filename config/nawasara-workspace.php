@@ -26,6 +26,10 @@ return [
     // Minutes between provisioning runs (T-10).
     'sync_interval' => 15,
 
+    // Most account writes per run. The first run for ~11 000 ASN is spread
+    // over several runs instead of one that outlives the job timeout.
+    'provision_batch' => 1000,
+
     /*
     | Nextcloud door of the pilot gate (T-07): this Keycloak group is kept equal
     | to who may enter. Must match user_oidc's group-whitelist-regex (T-01).

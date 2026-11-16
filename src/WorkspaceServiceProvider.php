@@ -93,6 +93,14 @@ class WorkspaceServiceProvider extends ServiceProvider
                 ->name('nawasara-workspace:sync-pilot-group')
                 ->everyFifteenMinutes()
                 ->withoutOverlapping(10);
+
+            // Accounts for every ASN (T-10); queues the OPD folder sync (T-12).
+            $every = max(5, (int) config('nawasara-workspace.sync_interval', 15));
+            $this->app->make(\Illuminate\Console\Scheduling\Schedule::class)
+                ->call(fn () => Jobs\SyncWorkspaceAccountsJob::dispatch(triggerSource: 'scheduled'))
+                ->name('nawasara-workspace:sync-accounts')
+                ->cron("*/{$every} * * * *")
+                ->withoutOverlapping(30);
         });
     }
 

@@ -10,7 +10,7 @@ $prefix = 'nawasara-workspace';
 | lands silently under "Lainnya".
 |
 | Pages are added per task: Peserta Pilot (T-05), Folder OPD (T-12/T-13),
-| Penyimpangan Kuota (T-14), Antrean Pegawai Keluar (T-33).
+| Penyimpangan Kuota (T-14), Antrean Pegawai Keluar (T-33), Jejak Akses (T-36).
 */
 
 return [
@@ -48,6 +48,13 @@ return [
                 'icon' => 'lucide-user-x',
                 'url' => url($prefix.'/offboarding'),
                 'permission' => 'workspace.offboarding.view',
+                'navigate' => true,
+            ],
+            [
+                'label' => 'Jejak Akses',
+                'icon' => 'lucide-footprints',
+                'url' => url($prefix.'/audit'),
+                'permission' => 'workspace.audit.view',
                 'navigate' => true,
             ],
         ],

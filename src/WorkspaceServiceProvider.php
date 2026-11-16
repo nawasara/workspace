@@ -145,6 +145,27 @@ class WorkspaceServiceProvider extends ServiceProvider
                 ->dailyAt((string) config('nawasara-workspace.offboarding.run_at', '02:30'))
                 ->timezone('Asia/Jakarta')
                 ->withoutOverlapping(60);
+
+            // Jejak Akses (T-36): read the admin_audit log. Only scheduled
+            // when a source is configured, so an unwired install does not
+            // fill the sync history with empty runs.
+            if (config('nawasara-workspace.audit.source', 'none') !== 'none') {
+                $everyAudit = max(1, (int) config('nawasara-workspace.audit.interval', 5));
+                $this->app->make(\Illuminate\Console\Scheduling\Schedule::class)
+                    ->call(fn () => Jobs\IngestAuditLogJob::dispatch(triggerSource: 'scheduled'))
+                    ->name('nawasara-workspace:ingest-audit-log')
+                    ->cron("*/{$everyAudit} * * * *")
+                    ->withoutOverlapping(30);
+            }
+
+            // Kept one year (FR-20 AC-3). Runs even without a source: rows
+            // already stored still have to age out.
+            $this->app->make(\Illuminate\Console\Scheduling\Schedule::class)
+                ->call(fn () => Jobs\PruneAuditEventsJob::dispatch(triggerSource: 'scheduled'))
+                ->name('nawasara-workspace:prune-audit-events')
+                ->dailyAt((string) config('nawasara-workspace.audit.prune_at', '03:15'))
+                ->timezone('Asia/Jakarta')
+                ->withoutOverlapping(60);
         });
     }
 

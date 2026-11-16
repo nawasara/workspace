@@ -97,4 +97,27 @@ return [
         'run_at' => '02:30',
         'archive_dir' => 'Arsip Pegawai Keluar',
     ],
+
+    /*
+    | Jejak Akses (T-36, FR-20): Nextcloud admin_audit log -> audit events.
+    | source: none | file | http (see Services/Audit/AuditLogSource).
+    |  - file: path readable by Nawasara (mounted or copied log).
+    |  - http: URL serving the log read-only with Range support (e.g. nginx
+    |    on the Workspace host, internal port). Bearer token from Vault group
+    |    `workspace` field `audit_log_token`, else `token` below.
+    | With `none` the ingest job is not scheduled.
+    | interval: minutes between reads. retention_days: FR-20 AC-3 (1 year).
+    | prune_at: daily prune, Asia/Jakarta.
+    */
+    'audit' => [
+        'source' => env('NAWASARA_WORKSPACE_AUDIT_SOURCE', 'none'),
+        'file' => env('NAWASARA_WORKSPACE_AUDIT_FILE', ''),
+        'url' => env('NAWASARA_WORKSPACE_AUDIT_URL', ''),
+        'token' => env('NAWASARA_WORKSPACE_AUDIT_TOKEN', ''),
+        'interval' => 5,
+        'chunk_bytes' => 1024 * 1024,
+        'max_bytes_per_run' => 32 * 1024 * 1024,
+        'retention_days' => 365,
+        'prune_at' => '03:15',
+    ],
 ];

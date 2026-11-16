@@ -33,7 +33,9 @@ Bekerja bersama: `nawasara/vault` (kredensial), `nawasara/registry` (OPD),
 | Tabel templat (UUID) + API: pita `GET /api/v1/workspace/templates`, kelola `.../templates/manage`, unggah, ubah, ganti berkas, hapus (T-31) | ✅ |
 | Pegawai Keluar: akun Kisara nonaktif → akun Workspace nonaktif, Drive Saya ditahan 90 hari, peringatan H-7, lalu dihapus; pindahkan ke Folder OPD, batalkan, hapus sekarang (T-33) | ✅ |
 | Layar atur akses subfolder di Workspace Web (T-13) | ⏳ |
-| Layar Kelola Templat di Workspace Web (T-32), gambar mini templat, jejak akses | ⏳ |
+| Jejak Akses: log admin_audit Nextcloud → halaman cari per berkas / per pegawai, saring aksi dan tanggal, simpan 1 tahun (T-36) | ✅ |
+| Jejak Akses tersambung ke log produksi (sumber `file` atau `http`, lihat bagian Jejak Akses) | ⏳ |
+| Layar Kelola Templat di Workspace Web (T-32), gambar mini templat | ⏳ |
 
 ## Setup
 
@@ -80,7 +82,7 @@ atau setelah berkas templat diperbarui.
 | `workspace.template.manage` | Kelola Templat |
 | `workspace.offboarding.view` | Halaman Pegawai Keluar |
 | `workspace.offboarding.manage` | Pindahkan ke Folder OPD, batalkan, hapus sekarang (hapus butuh sudo) |
-| `workspace.audit.view` | Jejak akses |
+| `workspace.audit.view` | Halaman Jejak Akses (baca saja) |
 
 ## Keputusan yang mudah dibatalkan tanpa tahu alasannya
 
@@ -237,6 +239,91 @@ Keputusan:
   membatalkan pilihan mereka.
 - **Belum diverifikasi di OnlyOffice sungguhan**: membuka tiap templat di
   editor tanpa galat format perlu stack Workspace nyata (LXC 145).
+
+## Jejak Akses (T-36)
+
+Halaman **Jejak Akses** (`/nawasara-workspace/audit`, permission
+`workspace.audit.view`) menjawab "siapa melakukan apa pada berkas ini":
+masuk, membuat, membuka, mengubah, membagikan, mencabut bagian, menghapus,
+memulihkan, dan perubahan akses subfolder (ACL), dengan NIP, berkas, waktu,
+dan IP (FR-20). Cari per pegawai (NIP atau nama) atau per berkas (nama,
+jalur, atau id berkas Nextcloud); saring aksi dan rentang tanggal (WIB).
+Menu baris hanya mempersempit daftar ke berkas atau pegawai itu.
+
+Datanya dari aplikasi **admin_audit** Nextcloud. `IngestAuditLogJob` membaca
+baris baru log itu tiap `audit.interval` menit ke tabel
+`nawasara_workspace_audit_events`; `PruneAuditEventsJob` menghapus yang lebih
+dari 365 hari setiap hari pukul 03:15 WIB.
+
+### Menyambungkan sumber log
+
+Log ada di host Workspace (LXC 145), Nawasara di host lain, dan belum ada
+pengiriman log mentah di antara keduanya (nawasara-agent mengirim insiden,
+bukan baris log). Karena itu sumbernya bisa dipilih, lewat `.env`:
+
+| `NAWASARA_WORKSPACE_AUDIT_SOURCE` | Isi lain | Kapan |
+|---|---|---|
+| `none` (bawaan) | | Belum tersambung: job tidak dijadwalkan, halaman kosong |
+| `http` | `NAWASARA_WORKSPACE_AUDIT_URL`, token di Vault `workspace` field `audit_log_token` (atau `NAWASARA_WORKSPACE_AUDIT_TOKEN`) | **Disarankan.** Berkas log disajikan baca-saja oleh nginx di LXC 145, di port internal yang sama dengan `base_url`, dibatasi IP Nawasara + token Bearer. Nawasara sudah menjangkau alamat itu, jadi tidak ada akses baru |
+| `file` | `NAWASARA_WORKSPACE_AUDIT_FILE` | Log dapat dibaca sebagai berkas lokal (dipasang sebagai volume, disalin, atau satu host) |
+
+Kedua sumber membaca berdasarkan **posisi byte** di berkas yang hanya
+ditambah. Itu yang membuat job dapat dilanjutkan dan aman terhadap rotasi;
+sumber lain (mis. syslog) perlu kelas baru yang menerapkan
+`Services\Audit\AuditLogSource`.
+
+### Keputusan yang mudah dibatalkan tanpa tahu alasannya
+
+- **Satu baris per permintaan per berkas untuk "Mengubah".** Nextcloud menulis
+  `created` *dan* `written to` untuk satu unggahan, dan `written to` lagi
+  untuk tiap simpan dalam permintaan yang sama. Tanpa penggabungan per
+  `reqId` + id berkas, setiap unggahan tampil sebagai "Membuat" lalu
+  "Mengubah", dan staf mengira berkasnya diubah orang.
+- **Kunci anti-ganda = sha256 baris mentah**, bukan (waktu, pegawai, aksi).
+  Waktu admin_audit hanya sampai detik, dan dua kejadian sah dalam satu detik
+  itu biasa. Baris mentah memuat `reqId`, jadi hanya baris yang benar-benar
+  sama yang dianggap ganda; membaca ulang dari awal (kursor kembali ke 0
+  setelah rotasi) aman.
+- **Rotasi dikenali dari sidik jari baris pertama**, bukan hanya ukuran
+  berkas: logrotate yang mengganti berkas lalu cepat terisi lagi melebihi
+  posisi lama akan terlewat bila hanya ukuran yang dilihat.
+- **"Sebelum" diambil dari kejadian sebelumnya** dengan bagian (Share ID) atau
+  aturan ACL (id berkas + pengguna/grup) yang sama, karena admin_audit hanya
+  mencatat nilai baru. Bila kejadian sebelumnya sudah dipangkas atau terjadi
+  sebelum log tersambung, "Sebelum" kosong. Untuk "Izin bagian diubah"
+  "Sebelum" sengaja tidak diisi: barisnya tidak memuat Share ID, sehingga
+  dengan beberapa penerima nilainya hanya tebakan.
+- **Tanpa aksi hapus atau ubah di halaman.** Jejak yang dapat disunting
+  admin tidak membuktikan apa pun; baris hanya keluar lewat pemangkasan 1
+  tahun (FR-20 AC-3).
+- **Yang sengaja diabaikan:** percobaan masuk, gagal masuk, keluar, pratinjau
+  (satu baris per gambar mini), cache entry (satu baris per berkas yang
+  dipindai), pengelolaan pengguna/grup/aplikasi, perintah occ, sandi/tanggal
+  kedaluwarsa tautan, versi dihapus. Ditambah ke `AuditLogParser` bila
+  dibutuhkan.
+
+### Pemetaan pesan admin_audit
+
+Format disalin dari kode Nextcloud 31 (`apps/admin_audit`) dan groupfolders
+19 (`lib/ACL/RuleManager.php`); contohnya ada di
+`tests/manual/fixtures/admin-audit-nc31.log`.
+
+| Aksi | Pesan |
+|---|---|
+| Masuk | `Login successful: "<uid>"` |
+| Membuat | `File with id "<id>" created: "<path>"`, `File id copied from: ...` |
+| Membuka | `File with id "<id>" accessed: "<path>"` |
+| Mengubah | `File with id "<id>" written to: "<path>"`, `File renamed with id ...` |
+| Membagikan | `The <type> "<path>" with ID "<id>" has been shared ...`, `The permissions of the shared ...` |
+| Mencabut bagian | `The <type> "<path>" with ID "<id>" has been unshared ...` |
+| Menghapus | `File with id "<id>" deleted: ...` (ke Sampah), `File "<path>" deleted from trash bin.` (permanen) |
+| Memulihkan | `File "<path>" restored from trash bin.`, `Version "<v>" of "<path>" was restored.` |
+| Ubah akses folder | `A new ACL rule was created ...`, `The ACL rule was updated ...`, `The ACL rule was deleted ...` |
+
+Belum diuji pada Nextcloud sungguhan: apakah `user_oidc` dengan token Bearer
+Workspace Web memicu `Login successful` di setiap permintaan (jika ya, aksi
+"Masuk" akan membanjir dan perlu disaring per sesi), dan apakah penyimpanan
+dari OnlyOffice tercatat sebagai `written to` atas nama pegawai.
 
 ## Roadmap
 
@@ -478,6 +565,6 @@ Lewat remote-test (VM tes), dari root nawasara-dev:
 
 ```bash
 bash <skills>/tooling/remote-test.sh -- 'composer install -n && php artisan package:discover \
-  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api uji-templat-bawaan uji-templat-api uji-pegawai-keluar; do \
+  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api uji-templat-bawaan uji-templat-api uji-pegawai-keluar uji-jejak-akses; do \
      php packages/nawasara-workspace/tests/manual/$t.php; done'
 ```

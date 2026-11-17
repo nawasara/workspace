@@ -216,6 +216,19 @@ Keputusan:
   nama, NIP, atau angka nyata. Pemeriksaan `--check` menolak angka 18 digit.
   Tanda "Kisara (bawaan)" ada di properti dokumen (penulis, kata kunci,
   komentar) dan di kaki halaman.
+- **Bahasa id-ID tertulis di dalam berkas** (FR-21 AC-1): OnlyOffice memilih
+  kamus periksa ejaan dari bahasa yang tersimpan di dokumen, bukan dari
+  setelan server. python-docx dan python-pptx bawaannya en-US, sehingga
+  dokumen baru dari templat diperiksa dengan kamus Inggris. Karena itu docx
+  membawa `w:lang` id-ID di bawaan dokumen dan semua gaya paragraf (Normal,
+  Heading, Title, dst.), pptx membawa `lang="id-ID"` di gaya teks bawaan
+  presentasi, gaya teks slide master/layout, dan setiap teks yang dibuat.
+  `--check` gagal bila masih ada tag bahasa en-US. xlsx tidak punya bahasa
+  per sel atau per teks di format berkasnya; ia hanya diberi `dc:language`
+  id-ID di properti dokumen, dan periksa ejaan lembar kerja mengikuti kamus
+  yang dipilih di editor. Setelah berkas dibuat ulang, jalankan lagi
+  `BuiltinTemplateSeeder`: hash berubah, jadi ke-14 berkas di Nextcloud
+  diganti.
 - **Rumus hanya yang wajar**: Jumlah = Volume x Harga dan total di Anggaran
   dan Inventaris, hitung H/S/I/C/DL/TK dan persen hadir di Rekap Absensi,
   nama hari dari tanggal di Jadwal Piket, jumlah hadir di Daftar Hadir.

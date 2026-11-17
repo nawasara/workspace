@@ -16,6 +16,16 @@ Content rules (FR-15 AC-2): generic skeletons only, square-bracket
 placeholders ([NAMA OPD], [Nama Lengkap], ...), never real names, NIPs or
 numbers. Every file is marked "Kisara (bawaan)" in its document properties
 and in a small footer.
+
+Language (FR-21 AC-1): OnlyOffice picks the spell-check dictionary from the
+language stored in the document, not from a server setting. So every docx
+carries id-ID on the document defaults and its styles (w:lang), and every
+pptx carries lang="id-ID" on the presentation default text style, the slide
+master/layout text styles and every run it creates. python-docx/python-pptx
+ship en-US there; --check fails if any en-US language tag is left.
+SpreadsheetML has no per-cell or per-run language, so xlsx only gets
+dc:language=id-ID in its core properties; its spell check follows the
+dictionary chosen in the editor.
 """
 
 from __future__ import annotations
@@ -35,6 +45,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
+from lxml import etree
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -43,6 +54,7 @@ from pptx import Presentation
 from pptx.dml.color import RGBColor as PRGB
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
+from pptx.presentation import Presentation as PresentationObj
 from pptx.util import Emu, Inches
 from pptx.util import Pt as PPt
 
@@ -51,6 +63,7 @@ FIXED_DATE = dt.datetime(2026, 11, 17, 0, 0, 0)
 MARK = "Kisara (bawaan)"
 FOOTER = "Templat Kisara (bawaan)"
 KEYWORDS = "Kisara (bawaan); templat"
+LANG = "id-ID"
 COMMENT = "Templat bawaan Kisara Workspace. Kerangka umum tanpa data; ganti teks dalam [kurung siku]."
 
 PEMKAB = "PEMERINTAH KABUPATEN PONOROGO"
@@ -94,7 +107,50 @@ def doc_new(title: str) -> Document:
     cp.created = FIXED_DATE
     cp.modified = FIXED_DATE
     cp.revision = 1
+    cp.language = LANG
+    doc_set_lang(d)
     return d
+
+
+# w:rPr children that come after w:lang in the schema (CT_RPr sequence).
+_RPR_AFTER_LANG = ("w:eastAsianLayout", "w:specVanish", "w:oMath", "w:rPrChange")
+
+
+def _rpr_set_lang(rPr):
+    lang = rPr.find(qn("w:lang"))
+    if lang is None:
+        lang = OxmlElement("w:lang")
+        after = [e for e in (rPr.find(qn(t)) for t in _RPR_AFTER_LANG) if e is not None]
+        if after:
+            after[0].addprevious(lang)
+        else:
+            rPr.append(lang)
+    lang.set(qn("w:val"), LANG)
+    lang.set(qn("w:eastAsia"), LANG)
+    lang.set(qn("w:bidi"), "ar-SA")  # complex-script slot, as in Word's own id-ID default
+
+
+def doc_set_lang(d):
+    """
+    Indonesian proofing language on the document defaults, Normal, the
+    headings and every other paragraph style, plus any w:lang the python-docx
+    template already carries (styles.xml, stylesWithEffects.xml, the theme
+    font language in settings.xml). Runs carry no w:lang, so they inherit.
+    """
+    styles = d.styles.element
+    _rpr_set_lang(styles.find(qn("w:docDefaults")).find(qn("w:rPrDefault")).find(qn("w:rPr")))
+    for st in styles.findall(qn("w:style")):
+        if st.get(qn("w:type")) == "paragraph":
+            _rpr_set_lang(st.get_or_add_rPr())
+    for el in list(styles.iter(qn("w:lang"))):
+        _rpr_set_lang(el.getparent())
+    tfl = d.settings.element.find(qn("w:themeFontLang"))
+    if tfl is not None:
+        tfl.set(qn("w:val"), LANG)
+    tag = f'<w:lang w:val="{LANG}" w:eastAsia="{LANG}" w:bidi="ar-SA"/>'.encode()
+    for part in d.part.package.iter_parts():
+        if str(part.partname).endswith("/stylesWithEffects.xml"):
+            part._blob = re.sub(rb"<w:lang [^>]*/>", tag, part.blob)
 
 
 def para(d, text="", bold=False, size=None, align=None, italic=False, space_after=0, indent_cm=None):
@@ -386,6 +442,7 @@ def wb_new(title: str):
     p.category = "Templat Kisara"
     p.created = FIXED_DATE
     p.modified = FIXED_DATE
+    p.language = LANG
     ws.oddFooter.left.text = FOOTER
     ws.oddFooter.left.size = 8
     ws.oddFooter.right.text = "Halaman &P dari &N"
@@ -686,7 +743,49 @@ def prs_new(title: str) -> Presentation:
     cp.created = FIXED_DATE
     cp.modified = FIXED_DATE
     cp.revision = 1
+    cp.language = LANG
     return p
+
+
+def prs_set_lang(p):
+    """
+    id-ID on the presentation default text style, every level of the slide
+    master text styles (title/body/other), every language tag the template
+    master and layouts already carry, and every run on the generated slides
+    (a run without a:rPr gets one). Called once, right before saving.
+    """
+    from pptx.oxml.ns import qn as pqn
+
+    def stamp(root):
+        for tag in ("a:defRPr", "a:rPr", "a:endParaRPr"):
+            for el in root.iter(pqn(tag)):
+                el.set("lang", LANG)
+
+    def levels(container):
+        # a:lvlNpPr are plain lxml elements here; a:defRPr sits before a:extLst.
+        for lvl in container:
+            if lvl.tag.endswith("pPr") and lvl.find(pqn("a:defRPr")) is None:
+                ext = lvl.find(pqn("a:extLst"))
+                el = etree.SubElement(lvl, pqn("a:defRPr"))
+                if ext is not None:
+                    ext.addprevious(el)
+
+    dts = p.part._element.find(pqn("p:defaultTextStyle"))
+    if dts is not None:
+        levels(dts)
+        stamp(dts)
+    for master in p.slide_masters:
+        tx = master._element.find(pqn("p:txStyles"))
+        if tx is not None:
+            for style in tx:
+                levels(style)
+        stamp(master._element)
+        for layout in master.slide_layouts:
+            stamp(layout._element)
+    for slide in p.slides:
+        for r in slide._element.iter(pqn("a:r")):
+            r.get_or_add_rPr()
+        stamp(slide._element)
 
 
 def blank(p):
@@ -955,6 +1054,8 @@ def normalize(raw: bytes) -> bytes:
 
 
 def save(obj) -> bytes:
+    if isinstance(obj, PresentationObj):
+        prs_set_lang(obj)
     buf = io.BytesIO()
     obj.save(buf)
     return normalize(buf.getvalue())
@@ -981,6 +1082,7 @@ def check(path: Path) -> list[str]:
             problems.append("no visible 'Templat Kisara (bawaan)' footer text")
         if re.search(rb"\b\d{18}\b", blob):
             problems.append("contains an 18-digit number (NIP?)")
+        problems += check_lang(path.suffix, {n: z.read(n) for n in names if n.endswith(".xml")})
     if path.suffix == ".docx":
         d = Document(str(path))
         if not d.paragraphs or d.core_properties.author != MARK:
@@ -994,6 +1096,40 @@ def check(path: Path) -> list[str]:
         p = Presentation(str(path))
         if len(p.slides) < 5 or p.core_properties.author != MARK:
             problems.append("pptx round-trip: too few slides or wrong author")
+    return problems
+
+
+def check_lang(suffix: str, xml: dict[str, bytes]) -> list[str]:
+    """FR-21 AC-1: id-ID where the editor reads it, no en-US language tag left."""
+    problems = []
+    lang_b = LANG.encode()
+    blob = b"".join(xml.values())
+    if not re.search(rb"<dc:language[^>]*>" + lang_b + rb"</dc:language>", xml.get("docProps/core.xml", b"")):
+        problems.append(f"core properties lack dc:language {LANG}")
+    if suffix == ".docx":
+        tags = re.findall(rb"<w:(?:lang|themeFontLang) [^>]*>", blob)
+        if any(b'"en-US"' in t for t in tags):
+            problems.append("docx still has an en-US language tag")
+        styles = xml.get("word/styles.xml", b"")
+        defaults = re.search(rb"<w:rPrDefault>.*?</w:rPrDefault>", styles, re.S)
+        if not defaults or b'<w:lang w:val="' + lang_b + b'"' not in defaults.group(0):
+            problems.append(f"docx rPrDefault lacks w:lang {LANG}")
+        for sid in (b"Normal", b"Heading1", b"Heading2", b"Title"):
+            m = re.search(rb'<w:style [^>]*w:styleId="' + sid + rb'".*?</w:style>', styles, re.S)
+            if not m or b'<w:lang w:val="' + lang_b + b'"' not in m.group(0):
+                problems.append(f"docx style {sid.decode()} lacks w:lang {LANG}")
+    elif suffix == ".pptx":
+        langs = set(re.findall(rb' lang="([^"]*)"', blob))
+        if langs != {lang_b}:
+            problems.append(f"pptx language tags {sorted(langs)}, expected only {LANG}")
+        if b'lang="' + lang_b + b'"' not in xml.get("ppt/presentation.xml", b""):
+            problems.append(f"pptx defaultTextStyle lacks lang {LANG}")
+        for name, data in xml.items():
+            if name.startswith("ppt/slides/slide"):
+                runs = data.count(b"<a:r>")
+                stamped = len(re.findall(rb'<a:r><a:rPr [^>]*lang="' + lang_b + b'"', data))
+                if runs != stamped:
+                    problems.append(f"{name}: {runs - stamped} run(s) without lang {LANG}")
     return problems
 
 

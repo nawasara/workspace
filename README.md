@@ -469,11 +469,11 @@ laju per pegawai).
 
 ```json
 { "data": {
-    "people": [ { "nip": "199506142020121004", "name": "Pringgo Saputro",
-                  "jabatan": "PRANATA KOMPUTER AHLI PERTAMA", "unit": "BIDANG APLIKASI INFORMATIKA",
+    "people": [ { "nip": "190001012020011001", "name": "Budi Contoh",
+                  "jabatan": "PRANATA KOMPUTER AHLI PERTAMA", "unit": "BIDANG CONTOH",
                   "opd": { "id": 7, "name": "Dinas Komunikasi dan Informatika" } } ],
     "opds": [ { "id": 7, "name": "Dinas Komunikasi dan Informatika", "group": "OPD-7" } ] },
-  "meta": { "q": "pringgo", "limit": 10 } }
+  "meta": { "q": "budi", "limit": 10 } }
 ```
 
 Galat: `422 query_too_short`, `422 invalid_actor`, `429 rate_limited`
@@ -509,10 +509,10 @@ walau salah satu sumber gagal:
 
 ```json
 { "data": {
-    "nip": "199506142020121004",
+    "nip": "190001012020011001",
     "drive": { "status": "ok", "used_bytes": 2684354560, "quota_bytes": 3221225472,
                "used_percent": 83, "level": "warning" },
-    "mail":  { "address": "pringgo@ponorogo.go.id", "status": "ok",
+    "mail":  { "address": "budi.contoh@ponorogo.go.id", "status": "ok",
                "used_bytes": 210239488, "quota_bytes": 1073741824,
                "used_percent": 19, "level": "ok" } },
   "meta": { "warning_percent": 80 } }

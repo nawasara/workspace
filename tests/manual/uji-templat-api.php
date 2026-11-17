@@ -202,7 +202,7 @@ $cek('app dari ekstensi, urutan setelah bawaan', $d['app'] === 'docs' && $d['ext
 $cek('berkas di "Templat Kisara", path + file_id untuk Workspace Web', $d['path'] === 'Templat Kisara/Nota Dinas Bupati.docx' && $d['file_id'] === $nc->fileId($d['path']) && $d['builtin'] === false);
 $cek('UUID v7 di jawaban', Str::isUuid($d['id']) && $d['id'][14] === '7');
 $cek('created_by/updated_by = akun admin, tidak ikut jawaban', Template::find($d['id'])->created_by === $uAdmin->id && ! array_key_exists('created_by', $d));
-$cek('jejak aktivitas dengan pelaku admin', DB::table('activity_log')->where('subject_id', $d['id'])->where('causer_id', $uAdmin->id)->exists());
+$cek('jejak aktivitas dengan pelaku admin', DB::table('activity_log')->where('properties->template_id', $d['id'])->where('causer_id', $uAdmin->id)->exists());
 $drafId = $d['id'];
 
 $r = $baru($admin, ['name' => 'Nota Dinas Bupati', 'scope' => 'all']);
@@ -315,6 +315,16 @@ $tAkses = $tokens->create('uji akses', ['workspace.access.read'])['plaintext'];
 $cek('is_admin true untuk admin Kisara', $body($call('GET', '/access/'.$admin, [], $tAkses))['data']['is_admin'] === true);
 PilotMember::create(['nip' => $bukan, 'name' => 'Bukan', 'stage' => 0]);
 $cek('is_admin false untuk akun lokal tanpa izin', $body($call('GET', '/access/'.$bukan, [], $tAkses))['data']['is_admin'] === false);
+
+echo "
+=== log aktivitas: UUID tidak masuk subject_id (bigint) ===
+";
+// Produksi (MySQL strict) menolak UUID di activity_log.subject_id yang bigint.
+// SQLite menerimanya, jadi yang diuji di sini bentuk barisnya, bukan galatnya.
+$log = DB::table('activity_log')->where('log_name', 'workspace')->where('description', 'Templat ditambahkan')->latest('id')->first();
+$cek('ada log "Templat ditambahkan"', $log !== null);
+$cek('subject_id dikosongkan', $log && $log->subject_id === null && $log->subject_type === null);
+$cek('id templat ada di properties', $log && is_string(json_decode($log->properties, true)['template_id'] ?? null));
 
 array_map('unlink', glob($tmpDir.'/*') ?: []);
 @rmdir($tmpDir);

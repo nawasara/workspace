@@ -78,6 +78,20 @@ class Template extends Model
             });
     }
 
+    /**
+     * activity_log.subject_id is a bigint (spatie's default migration, shared
+     * by every package), and this table's key is a UUID. MySQL in strict mode
+     * refuses the insert ("Data truncated for column 'subject_id'"), so every
+     * save of a template failed in production; SQLite in the tests stored it
+     * without complaint. The template id goes into the properties instead.
+     */
+    public function tapActivity(\Spatie\Activitylog\Contracts\Activity $activity, string $eventName): void
+    {
+        $activity->subject_id = null;
+        $activity->subject_type = null;
+        $activity->properties = $activity->properties->put('template_id', $this->getKey());
+    }
+
     public function opd(): BelongsTo
     {
         return $this->belongsTo(Opd::class, 'opd_id');

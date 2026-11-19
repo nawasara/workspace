@@ -6,11 +6,14 @@ use Nawasara\Keycloak\Models\KeycloakUser;
 use Nawasara\Registry\Models\Opd;
 use Nawasara\Registry\Services\UnitKerjaMatcher;
 use Nawasara\Workspace\Models\PilotMember;
+use Nawasara\Workspace\Support\KisaraAccessBridge;
 
 /**
  * Which OPD an ASN belongs to, for their OPD group and Folder OPD (T-11).
  *
- *   1. pilot override: `opd_id` set on the participant (when SIMAS is wrong)
+ *   1. pilot override: `opd_id` set on the participant (when SIMAS is wrong),
+ *      in Akses Layanan Kisara when asn-portal is installed, else in this
+ *      package's pilot table
  *   2. SIMAS: Keycloak attribute `simas_skpd` (filled on every login by the
  *      authenticator, 2.4.0) matched WHOLE to a registry OPD, the same rule
  *      as UnitKerjaMatcher::matchSimas: "DINAS PENDIDIKAN" never claims
@@ -35,7 +38,7 @@ class OpdResolver
 
     public function resolve(string $nip, ?string $simasSkpd): ?int
     {
-        $this->overrides ??= PilotMember::whereNotNull('opd_id')->pluck('opd_id', 'nip')->map(fn ($v) => (int) $v)->all();
+        $this->overrides ??= $this->loadOverrides();
         if (isset($this->overrides[$nip])) {
             return $this->overrides[$nip];
         }
@@ -47,6 +50,17 @@ class OpdResolver
         $this->byName ??= $this->buildMap();
 
         return $this->byName[UnitKerjaMatcher::normalize($simasSkpd)] ?? null;
+    }
+
+    /** @return array<string, int> */
+    private function loadOverrides(): array
+    {
+        $bridge = app(KisaraAccessBridge::class);
+        if ($bridge->active()) {
+            return $bridge->opdOverrides();
+        }
+
+        return PilotMember::whereNotNull('opd_id')->pluck('opd_id', 'nip')->map(fn ($v) => (int) $v)->all();
     }
 
     /** simas_name when set (bound to SIMAS spelling), else name. */

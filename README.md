@@ -19,7 +19,8 @@ Bekerja bersama: `nawasara/vault` (kredensial), `nawasara/registry` (OPD),
 |---|---|
 | Halaman Ringkasan: koneksi ke Nextcloud, versi, konektor OnlyOffice | ✅ |
 | Grup Vault `workspace` + tombol Uji | ✅ |
-| Peserta Pilot: daftar, tambah dari direktori Keycloak, cabut/hapus, kill switch (T-05) | ✅ |
+| Peserta Pilot: daftar, tambah dari direktori Keycloak, cabut/hapus, kill switch (T-05) | ✅ (tanpa asn-portal) |
+| Daftar pilot, tahap, OPD override, kill switch dan "buka untuk semua" dikelola di **Akses Layanan Kisara** (`nawasara/asn-portal`) bila paket itu terpasang; halaman Peserta Pilot lalu hanya mengalihkan | ✅ |
 | API akses `GET /api/v1/workspace/access/{nip}`, scope `workspace.access.read` (T-06) | ✅ |
 | Direktori `GET /api/v1/workspace/directory`, scope `workspace.directory.read`: cari pegawai (nama/NIP) dan OPD untuk Bagikan dan @mention (T-25) | ✅ |
 | Sinkron grup Keycloak `workspace-pilot`: setelah perubahan + tiap 15 menit (T-07) | ✅ |
@@ -85,6 +86,48 @@ atau setelah berkas templat diperbarui.
 | `workspace.offboarding.view` | Halaman Pegawai Keluar |
 | `workspace.offboarding.manage` | Pindahkan ke Folder OPD, batalkan, hapus sekarang (hapus butuh sudo) |
 | `workspace.audit.view` | Halaman Jejak Akses (baca saja) |
+
+## Akses Layanan Kisara (pilot dikelola di asn-portal)
+
+Sejak Akses Layanan Kisara, siapa yang boleh memakai Kisara Workspace diatur
+di satu daftar bersama Kisara Mail dan layanan berikutnya, di paket
+`nawasara/asn-portal` (halaman **Akses Layanan Kisara**, layanan
+`workspace`). Paket ini tidak bergantung pada asn-portal; ia mencarinya lewat
+`Support\KisaraAccessBridge`:
+
+| Kondisi | Sumber daftar, tahap, OPD override, kill switch, `pilot_open` |
+|---|---|
+| asn-portal terpasang **dan** tabel `nawasara_asn_portal_app_access` ada | Akses Layanan Kisara (`KisaraAccess`, layanan `workspace`) |
+| selain itu | tabel paket ini (`nawasara_workspace_pilot_members`, `Setting`), seperti dulu |
+
+Yang membaca lewat jembatan itu: `AccessDecider` (API `/workspace/access`,
+jawabannya tetap sama bentuknya), `PilotGroupSync` (grup Keycloak
+`workspace-pilot` = baris aktif layanan `workspace` yang lolos decider),
+`OpdResolver` (OPD override) dan `QuotaReader::isParticipant` (kartu Drive).
+Perubahan di Akses Layanan Kisara memicu `SyncPilotGroupJob` lewat event
+`KisaraAccessChanged` (didengarkan dengan nama kelas; tanpa asn-portal event
+itu tidak pernah ada). Perubahan akses Mail tidak memicu apa pun di sini.
+
+Keputusan yang mudah dibatalkan tanpa tahu alasannya:
+
+- **Halaman Peserta Pilot mengalihkan, dan setiap tulisannya ditolak 409**,
+  begitu Akses Layanan Kisara aktif. Dua daftar yang sama-sama bisa disunting
+  akan saling menyimpang, dan yang tidak lagi dibaca akan tampak berfungsi.
+  Menu "Peserta Pilot" menjadi "Akses Layanan" dengan permission
+  `asn-portal.access.view`.
+- **OPD override pindah ke Akses Layanan Kisara** (kolom `opd_id` pada baris
+  layanan `workspace`), bukan tetap di tabel ini. Kalau tetap di sini,
+  pegawai yang ditambahkan lewat halaman baru tidak punya baris di tabel ini
+  dan OPD-nya tidak bisa dikoreksi sama sekali; satu tempat untuk satu orang
+  lebih mudah daripada dua formulir. Seperti dulu, override berlaku juga
+  untuk baris yang dinonaktifkan (OPD adalah tempat kerja, bukan status
+  pilot).
+- **Jembatan hanya mengingat jawaban "ya".** Jawaban "tidak" ditanyakan lagi:
+  queue worker yang hidup di antara deploy dan `migrate` akan terus memakai
+  daftar lama bila "tidak" ikut diingat, dan grup Keycloak berhenti mengikuti
+  daftar baru.
+- **Tabel lama tidak dihapus.** Ia tetap sumber bila asn-portal dilepas, dan
+  migrasi asn-portal menyalin isinya (baris aktif) saat tabel baru dibuat.
 
 ## Keputusan yang mudah dibatalkan tanpa tahu alasannya
 
@@ -674,6 +717,6 @@ Lewat remote-test (VM tes), dari root nawasara-dev:
 
 ```bash
 bash <skills>/tooling/remote-test.sh -- 'composer install -n && php artisan package:discover \
-  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api uji-templat-bawaan uji-templat-api uji-pegawai-keluar uji-jejak-akses uji-peringatan; do \
+  && for t in uji-koneksi-nextcloud uji-klien-admin uji-akses uji-akses-layanan-kisara uji-peserta-pilot uji-grup-pilot uji-provisioning uji-kuota uji-direktori uji-kuota-api uji-templat-bawaan uji-templat-api uji-pegawai-keluar uji-jejak-akses uji-peringatan; do \
      php packages/nawasara-workspace/tests/manual/$t.php; done'
 ```

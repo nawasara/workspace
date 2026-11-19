@@ -3,6 +3,7 @@
 namespace Nawasara\Workspace;
 
 use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
 use Livewire\Livewire;
@@ -111,6 +112,15 @@ class WorkspaceServiceProvider extends ServiceProvider
         Models\PilotMember::saved($dispatch);
         Models\PilotMember::deleted($dispatch);
         Models\Setting::saved($dispatch);
+
+        // Akses Layanan Kisara (nawasara/asn-portal) owns the list once it is
+        // installed. Listened to by NAME: without asn-portal the event class
+        // does not exist and simply never fires.
+        Event::listen(Support\KisaraAccessBridge::CHANGED_EVENT, function (object $event) use ($dispatch) {
+            if (($event->app ?? null) === Support\KisaraAccessBridge::APP) {
+                $dispatch();
+            }
+        });
 
         // A quota exception changed: run the account sync now (it queues the
         // folder sync), instead of waiting up to sync_interval minutes. Only

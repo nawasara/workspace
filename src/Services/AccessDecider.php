@@ -5,6 +5,7 @@ namespace Nawasara\Workspace\Services;
 use Nawasara\Keycloak\Models\KeycloakUser;
 use Nawasara\Workspace\Models\PilotMember;
 use Nawasara\Workspace\Models\Setting;
+use Nawasara\Workspace\Support\KisaraAccessBridge;
 
 /**
  * Who may enter Kisara Workspace right now (FR-02). One rule set for both
@@ -18,6 +19,12 @@ use Nawasara\Workspace\Models\Setting;
  *   2. disabled account an ASN whose Kisara account is off never gets in
  *   3. pilot_open       stage 3: every active ASN
  *   4. participant      active row in the pilot list
+ *
+ * With nawasara/asn-portal installed and migrated, the list and both flags
+ * live in Akses Layanan Kisara (app `workspace`) and the whole decision is
+ * delegated to its KisaraAccess, which applies the same order and returns
+ * the same reasons. The tables of this package are then no longer read for
+ * access; see KisaraAccessBridge.
  */
 class AccessDecider
 {
@@ -31,6 +38,13 @@ class AccessDecider
 
     public const INVALID_NIP = 'invalid_nip';
 
+    private KisaraAccessBridge $bridge;
+
+    public function __construct(?KisaraAccessBridge $bridge = null)
+    {
+        $this->bridge = $bridge ?? app(KisaraAccessBridge::class);
+    }
+
     /**
      * @return array{nip: string, allowed: bool, reason: ?string, stage: ?int, opd_id: ?int}
      */
@@ -40,6 +54,10 @@ class AccessDecider
 
         if (preg_match('/^\d{18}$/', $nip) !== 1) {
             return $deny(self::INVALID_NIP);
+        }
+
+        if ($this->bridge->active()) {
+            return $this->bridge->decide($nip);
         }
 
         if (Setting::flag(Setting::KILL_SWITCH)) {

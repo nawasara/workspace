@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Nawasara\Workspace\Models\PilotMember;
 use Nawasara\Workspace\Models\Setting;
+use Nawasara\Workspace\Support\KisaraAccessBridge;
 
 /**
  * Drive and Mail usage of one employee, for the Penyimpanan page of Kisara
@@ -63,10 +64,15 @@ class QuotaReader
      * Pilot participant for the Drive card: pilot open to all ASN, or an
      * active row in the pilot list. The kill switch is deliberately not
      * checked: it closes the door for a while, but the files are still there
-     * and still use the quota.
+     * and still use the quota. From Akses Layanan Kisara when installed.
      */
     public function isParticipant(string $nip): bool
     {
+        $bridge = app(KisaraAccessBridge::class);
+        if ($bridge->active()) {
+            return $bridge->isMember($nip);
+        }
+
         return Setting::flag(Setting::PILOT_OPEN)
             || PilotMember::where('nip', $nip)->whereNull('removed_at')->exists();
     }

@@ -9,6 +9,7 @@ use Livewire\Component;
 use Nawasara\Keycloak\Concerns\SearchesKeycloakDirectory;
 use Nawasara\Registry\Models\Opd;
 use Nawasara\Workspace\Models\PilotMember;
+use Nawasara\Workspace\Support\GuardsLegacyPilotList;
 
 /**
  * Add / edit a pilot participant.
@@ -20,6 +21,7 @@ use Nawasara\Workspace\Models\PilotMember;
  */
 class Form extends Component
 {
+    use GuardsLegacyPilotList;
     use SearchesKeycloakDirectory;
 
     #[Locked]
@@ -60,6 +62,7 @@ class Form extends Component
     public function create(): void
     {
         $this->authorize('workspace.pilot.manage');
+        $this->refuseWhenKisaraAccessOwnsTheList();
         $this->resetForm();
         $this->dispatch('modal-open:workspace-pilot-form');
     }
@@ -68,6 +71,7 @@ class Form extends Component
     public function edit(int $id): void
     {
         $this->authorize('workspace.pilot.manage');
+        $this->refuseWhenKisaraAccessOwnsTheList();
         $this->resetForm();
 
         $m = PilotMember::findOrFail($id);
@@ -82,6 +86,7 @@ class Form extends Component
     public function pick(int $index): void
     {
         $this->authorize('workspace.pilot.manage');
+        $this->refuseWhenKisaraAccessOwnsTheList();
 
         $kc = $this->keycloakUserAt($index, $this->userSearch, $this->existingNips());
         $nip = (string) ($kc?->nip ?: $kc?->username);
@@ -106,6 +111,7 @@ class Form extends Component
     public function save(): void
     {
         $this->authorize('workspace.pilot.manage');
+        $this->refuseWhenKisaraAccessOwnsTheList();
 
         $this->validate([
             'stage' => ['required', 'integer', 'in:'.implode(',', array_keys(PilotMember::STAGES))],

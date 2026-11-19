@@ -9,6 +9,7 @@ use Livewire\Component;
 use Livewire\WithPagination;
 use Nawasara\AuthPrimitives\Traits\WithSudo;
 use Nawasara\Workspace\Models\PilotMember;
+use Nawasara\Workspace\Support\GuardsLegacyPilotList;
 
 /**
  * Pilot participant list (AGENTS §1a): filter + search toolbar, three-dot row
@@ -17,6 +18,7 @@ use Nawasara\Workspace\Models\PilotMember;
  */
 class Table extends Component
 {
+    use GuardsLegacyPilotList;
     use WithPagination, WithSudo;
 
     #[Url]
@@ -73,6 +75,7 @@ class Table extends Component
     public function edit(int $id): void
     {
         $this->authorize('workspace.pilot.manage');
+        $this->refuseWhenKisaraAccessOwnsTheList();
         $this->dispatch('workspace-pilot-edit', id: $id);
     }
 
@@ -80,6 +83,7 @@ class Table extends Component
     public function revoke(int $id): void
     {
         $this->authorize('workspace.pilot.manage');
+        $this->refuseWhenKisaraAccessOwnsTheList();
         PilotMember::findOrFail($id)->update(['removed_at' => now(), 'removed_by' => auth()->id()]);
         $this->dispatch('toast', ['type' => 'success', 'message' => 'Akses pilot dicabut. Berkasnya tidak tersentuh.']);
     }
@@ -87,6 +91,7 @@ class Table extends Component
     public function restore(int $id): void
     {
         $this->authorize('workspace.pilot.manage');
+        $this->refuseWhenKisaraAccessOwnsTheList();
         PilotMember::findOrFail($id)->update(['removed_at' => null, 'removed_by' => null]);
         $this->dispatch('toast', ['type' => 'success', 'message' => 'Peserta diaktifkan kembali.']);
     }
@@ -95,6 +100,7 @@ class Table extends Component
     public function delete(int $id): void
     {
         $this->authorize('workspace.pilot.manage');
+        $this->refuseWhenKisaraAccessOwnsTheList();
 
         if (! $this->requireSudo('menghapus peserta pilot')) {
             return;

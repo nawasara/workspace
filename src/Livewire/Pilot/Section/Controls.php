@@ -6,6 +6,7 @@ use Livewire\Component;
 use Nawasara\AuthPrimitives\Traits\WithSudo;
 use Nawasara\Workspace\Models\PilotMember;
 use Nawasara\Workspace\Models\Setting;
+use Nawasara\Workspace\Support\GuardsLegacyPilotList;
 
 /**
  * Pilot status and the kill switch (FR-02 AC-4).
@@ -16,11 +17,13 @@ use Nawasara\Workspace\Models\Setting;
  */
 class Controls extends Component
 {
+    use GuardsLegacyPilotList;
     use WithSudo;
 
     public function toggleKillSwitch(): void
     {
         $this->authorize('workspace.pilot.manage');
+        $this->refuseWhenKisaraAccessOwnsTheList();
 
         $turningOn = ! Setting::flag(Setting::KILL_SWITCH);
 
